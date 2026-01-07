@@ -5,7 +5,11 @@
 
 set -e
 
+# Change to the script's directory
+cd "$(dirname "$0")"
+
 echo "🚀 Starting StandX Maker Bot..."
+echo "Working directory: $(pwd)"
 
 # Start the bot using PM2 ecosystem config
 pm2 start ecosystem.config.js
