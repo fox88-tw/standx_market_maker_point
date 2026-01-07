@@ -83,22 +83,27 @@ export class StandXClient {
     side: OrderSide,
     qty: Decimal,
     price: Decimal,
-    reduceOnly: boolean = false
+    reduceOnly: boolean = false,
+    orderType: 'limit' | 'market' = 'limit'
   ): Promise<OrderResult> {
     try {
       const clientOrderId = `bot-${uuidv4().replace(/-/g, '').substring(0, 16)}`;
       const timestamp = Date.now();
 
-      const params = {
+      const params: any = {
         symbol,
         side,
-        order_type: 'limit',
+        order_type: orderType,
         qty: qty.toString(),
-        price: price.toString(),
-        time_in_force: 'gtc',
         reduce_only: reduceOnly,
         cl_ord_id: clientOrderId
       };
+
+      // Only add price and time_in_force for limit orders
+      if (orderType === 'limit') {
+        params.price = price.toString();
+        params.time_in_force = 'gtc';
+      }
 
       const payload = JSON.stringify(params);
       const headers = this.buildHeaders(payload, timestamp);
@@ -119,10 +124,10 @@ export class StandXClient {
       return {
         success: true,
         orderId: clientOrderId,
-        price,
+        price: orderType === 'market' ? Decimal(0) : price,
         size: qty,
         side,
-        status: 'OPEN'
+        status: orderType === 'market' ? 'FILLED' : 'OPEN'
       };
     } catch (error: any) {
       return {

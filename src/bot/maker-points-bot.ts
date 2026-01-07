@@ -79,8 +79,7 @@ export class MakerPointsBot extends EventEmitter {
       // Subscribe to channels
       log.info('Subscribing to channels...');
       this.ws.subscribeMarkPrice([this.config.trading.symbol]);
-      this.ws.subscribeUserOrders();
-      this.ws.subscribeUserPosition();
+      this.ws.subscribeUserStreams();
 
       // Setup WebSocket event handlers
       this.setupWebSocketHandlers();
@@ -192,8 +191,7 @@ export class MakerPointsBot extends EventEmitter {
       telegram.info('Market WebSocket reconnected');
       // Resubscribe
       this.ws.subscribeMarkPrice([this.config.trading.symbol]);
-      this.ws.subscribeUserOrders();
-      this.ws.subscribeUserPosition();
+      this.ws.subscribeUserStreams();
       // Restore orders
       this.placeInitialOrders();
     });
@@ -254,18 +252,79 @@ export class MakerPointsBot extends EventEmitter {
   /**
    * Handle position updates
    */
-  private handlePositionUpdate(data: any): void {
+  private async handlePositionUpdate(data: any): Promise<void> {
     try {
       const position = new Decimal(data.positionAmt || data.qty || 0);
+      const previousPosition = this.state.position;
       this.state.position = position;
 
-      log.debug(`Position updated: ${position} BTC`);
+      log.debug(`Position updated: ${previousPosition} → ${position} BTC`);
+
+      // Check if position changed from zero (an order was filled)
+      if (previousPosition.abs().lt(new Decimal('0.00001')) && position.abs().gte(new Decimal('0.00001'))) {
+        log.warn(`⚠️⚠️⚠️ POSITION DETECTED VIA WEBSOCKET ⚠️⚠️⚠️`);
+        log.warn(`  Previous: ${previousPosition} BTC`);
+        log.warn(`  Current: ${position} BTC`);
+
+        // Close position immediately
+        await this.closeDetectedPosition(position);
+      }
 
       // Emit event
       this.emit('position_updated', position);
 
     } catch (error: any) {
       log.error(`Error handling position update: ${error.message}`);
+    }
+  }
+
+  /**
+   * Close detected position immediately
+   */
+  private async closeDetectedPosition(position: Decimal): Promise<void> {
+    try {
+      const positionSize = position.abs();
+      const closeSide = position.gt(0) ? 'sell' : 'buy';
+
+      log.warn(`🔄 Closing position via market order...`);
+      log.warn(`  Size: ${positionSize} BTC`);
+      log.warn(`  Side: ${closeSide}`);
+
+      // Cancel all pending orders first
+      await this.orderManager.cancelAllOrders();
+
+      // Close position with market order
+      const closed = await this.orderManager.closePosition(positionSize, closeSide);
+
+      if (!closed) {
+        log.error('❌ Failed to close position!');
+        await telegram.error('Failed to close position! Manual intervention required!');
+        // Stop the bot to prevent further damage
+        await this.stop();
+        return;
+      }
+
+      log.warn(`✅ Position closed successfully`);
+
+      // Update position back to zero
+      this.state.position = Decimal(0);
+
+      // Wait a moment before placing new orders
+      await new Promise(resolve => setTimeout(resolve, 1000));
+
+      // Replace orders
+      log.warn(`🔄 Replacing orders...`);
+      await this.placeInitialOrders();
+
+      // Send notification
+      if (telegram.isEnabled()) {
+        await telegram.warning('Position detected and closed via market order');
+      }
+
+    } catch (error: any) {
+      log.error(`Error closing detected position: ${error.message}`);
+      await telegram.error(`Error closing position: ${error.message}`);
+      await this.stop();
     }
   }
 
@@ -339,6 +398,15 @@ export class MakerPointsBot extends EventEmitter {
     }
 
     try {
+      // SAFETY CHECK: Verify position is zero
+      const currentPosition = await this.orderManager.getCurrentPosition();
+      if (currentPosition.abs().gte(new Decimal('0.00001'))) {
+        log.error(`⚠️⚠️⚠️ NON-ZERO POSITION DETECTED IN CHECK LOOP ⚠️⚠️⚠️`);
+        log.error(`  Position: ${currentPosition} BTC`);
+        await this.closeDetectedPosition(currentPosition);
+        return;
+      }
+
       const minDistanceBp = this.config.trading.minDistanceBp;
       const maxDistanceBp = this.config.trading.maxDistanceBp;
 

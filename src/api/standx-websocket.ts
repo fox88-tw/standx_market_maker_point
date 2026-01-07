@@ -51,13 +51,7 @@ export class StandXWebSocket extends EventEmitter {
           console.log('[WS] Market Stream connected');
           this.reconnectAttempts = 0;
 
-          // Authenticate first (without streams)
-          this.marketWS?.send(JSON.stringify({
-            auth: {
-              token: this.auth.getAccessToken()
-            }
-          }));
-
+          // Don't authenticate here - will be done via subscribeUserStreams()
           resolve();
         });
 
@@ -146,6 +140,7 @@ export class StandXWebSocket extends EventEmitter {
 
     switch (channel) {
       case 'order':
+        console.log('[WS] Order message received:', JSON.stringify(message).substring(0, 200));
         this.handleUserOrders(message.data);
         break;
       case 'position':
@@ -186,6 +181,8 @@ export class StandXWebSocket extends EventEmitter {
    * Handle user order updates
    */
   private handleUserOrders(data: any): void {
+    console.log('[WS] Processing order update:', JSON.stringify(data));
+
     const orderData: WSOrderData = {
       orderId: data.id || data.order_id,
       clientOrderId: data.cl_ord_id || data.clientOrderId,
@@ -197,6 +194,12 @@ export class StandXWebSocket extends EventEmitter {
       fillQty: data.fill_qty || data.fillQty,
       avgFillPrice: data.avg_fill_price || data.avgFillPrice
     };
+
+    console.log('[WS] Emitting order_update event:', {
+      orderId: orderData.clientOrderId,
+      status: orderData.status,
+      fillQty: orderData.fillQty
+    });
 
     this.emit('order_update', orderData);
   }
@@ -236,28 +239,35 @@ export class StandXWebSocket extends EventEmitter {
    * Subscribe to user orders channel
    */
   subscribeUserOrders(): void {
-    // Re-auth with order stream subscription
-    this.marketWS?.send(JSON.stringify({
-      auth: {
-        token: this.auth.getAccessToken(),
-        streams: [{ channel: 'order' }]
-      }
-    }));
-    console.log(`[WS] Subscribed to order via re-auth`);
+    // NOTE: This is handled by subscribeUserStreams()
+    // Kept for backward compatibility
+    console.log(`[WS] subscribeUserOrders() called - will subscribe via subscribeUserStreams()`);
   }
 
   /**
    * Subscribe to user position channel
    */
   subscribeUserPosition(): void {
-    // Re-auth with position stream subscription
+    // NOTE: This is handled by subscribeUserStreams()
+    // Kept for backward compatibility
+    console.log(`[WS] subscribeUserPosition() called - will subscribe via subscribeUserStreams()`);
+  }
+
+  /**
+   * Subscribe to both order and position channels
+   * This should be called instead of subscribing separately
+   */
+  subscribeUserStreams(): void {
     this.marketWS?.send(JSON.stringify({
       auth: {
         token: this.auth.getAccessToken(),
-        streams: [{ channel: 'position' }]
+        streams: [
+          { channel: 'order' },
+          { channel: 'position' }
+        ]
       }
     }));
-    console.log(`[WS] Subscribed to position via re-auth`);
+    console.log(`[WS] Subscribed to order and position streams via re-auth`);
   }
 
   /**

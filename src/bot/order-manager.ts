@@ -37,19 +37,25 @@ export class OrderManager {
     side: OrderSide,
     qty: Decimal,
     price: Decimal,
-    reduceOnly: boolean = false
+    reduceOnly: boolean = false,
+    orderType: 'limit' | 'market' = 'limit'
   ): Promise<OrderInfo | null> {
     try {
       const roundedPrice = this.roundToTickSize(price);
 
-      log.info(`Placing ${side} order: ${qty} BTC @ $${roundedPrice}`);
+      if (orderType === 'market') {
+        log.info(`Placing MARKET ${side} order: ${qty} BTC`);
+      } else {
+        log.info(`Placing ${side} order: ${qty} BTC @ $${roundedPrice}`);
+      }
 
       const result = await this.client.placeOrder(
         this.symbol,
         side,
         qty,
         roundedPrice,
-        reduceOnly
+        reduceOnly,
+        orderType
       );
 
       if (!result.success) {
@@ -63,9 +69,9 @@ export class OrderManager {
         symbol: this.symbol,
         side: result.side || side,
         qty: result.size || qty,
-        price: result.price || roundedPrice,
-        filledQty: Decimal(0),
-        status: result.status || 'OPEN'
+        price: result.price || (orderType === 'market' ? Decimal(0) : roundedPrice),
+        filledQty: orderType === 'market' ? qty : Decimal(0),
+        status: result.status || (orderType === 'market' ? 'FILLED' : 'OPEN')
       };
 
       log.info(`✅ ${side} order placed: ${orderInfo.orderId}`);
@@ -166,34 +172,28 @@ export class OrderManager {
    */
   async closePosition(qty: Decimal, side: OrderSide): Promise<boolean> {
     try {
-      // Use aggressive price to ensure immediate fill
-      const [bestBid, bestAsk] = await this.client.fetchBBOPrices(this.symbol);
+      log.warn(`🔄 Closing ${side} position: ${qty} BTC with MARKET order`);
 
-      let closePrice: Decimal;
-      if (side === 'buy') {
-        // Close short: buy at slightly above best ask
-        closePrice = bestAsk.mul(new Decimal(1.001));
-      } else {
-        // Close long: sell at slightly below best bid
-        closePrice = bestBid.mul(new Decimal(0.999));
-      }
-
-      closePrice = this.roundToTickSize(closePrice);
-
-      log.info(`Closing ${side} position: ${qty} BTC @ $${closePrice} (market)`);
-
-      const result = await this.placeOrder(side, qty, closePrice, true);
+      // Use MARKET order for immediate fill
+      const result = await this.placeOrder(side, qty, Decimal(0), true, 'market');
 
       if (!result) {
-        log.error('Failed to place close order');
+        log.error('Failed to place close market order');
         return false;
       }
 
-      // Wait for fill
-      const filledOrder = await this.waitForOrderFill(result.orderId, 10000);
+      // Market orders should be filled immediately
+      if (result.status === 'FILLED') {
+        log.warn(`✅ Position closed immediately: ${qty} BTC`);
+        return true;
+      }
+
+      // If not immediately filled, wait briefly for confirmation
+      log.info(`Waiting for market order confirmation...`);
+      const filledOrder = await this.waitForOrderFill(result.orderId, 5000);
 
       if (filledOrder && filledOrder.status === 'FILLED') {
-        log.info(`✅ Position closed: ${qty} BTC`);
+        log.warn(`✅ Position closed: ${qty} BTC`);
         return true;
       }
 
@@ -237,5 +237,17 @@ export class OrderManager {
       .mul(10000);
 
     return distance.lte(new Decimal(thresholdBp));
+  }
+
+  /**
+   * Get current position
+   */
+  async getCurrentPosition(): Promise<Decimal> {
+    try {
+      return await this.client.getPosition(this.symbol);
+    } catch (error: any) {
+      log.error(`Error getting position: ${error.message}`);
+      return Decimal(0);
+    }
   }
 }
