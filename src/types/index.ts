@@ -103,6 +103,17 @@ export interface TradingConfig {
   maxDistanceBp: number;
 }
 
+export interface SpreadGuardConfig {
+  jumpSpreadBp: number;
+  maxSpreadBp: number;
+  cooldownMs: number;
+  lookbackSamples: number;
+  maxQuantile: number;
+  volLookbackSamples: number;
+  volHighThreshold: number;
+  volLowThreshold: number;
+}
+
 export interface TelegramConfig {
   token: string;
   chatId: string;
@@ -118,6 +129,7 @@ export interface LoggingConfig {
 export interface Config {
   standx: StandXConfig;
   trading: TradingConfig;
+  spreadGuard: SpreadGuardConfig;
   telegram: TelegramConfig;
   logging: LoggingConfig;
 }

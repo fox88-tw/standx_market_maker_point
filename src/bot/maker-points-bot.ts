@@ -25,6 +25,10 @@ export class MakerPointsBot extends EventEmitter {
   private markPrice: Decimal = Decimal(0);
   private stopRequested: boolean = false;
   private startTime: number;
+  private spreadSamples: number[] = [];
+  private spreadVolSamples: number[] = [];
+  private lastSpreadBp: number | null = null;
+  private spreadGuardCooldownUntil = 0;
 
   constructor() {
     super();
@@ -208,6 +212,8 @@ export class MakerPointsBot extends EventEmitter {
 
       log.debug(`Mark price updated: $${markPrice.toFixed(2)}`);
 
+      await this.checkSpreadGuard(data);
+
       // Check if we need to cancel and replace orders
       await this.checkAndReplaceOrders();
 
@@ -333,6 +339,11 @@ export class MakerPointsBot extends EventEmitter {
    */
   private async placeInitialOrders(): Promise<void> {
     try {
+      if (this.isSpreadGuardCoolingDown()) {
+        log.info('Spread guard cooldown active; skipping initial order placement');
+        return;
+      }
+
       const mode = this.config.trading.mode;
 
       // Cancel any existing orders
@@ -398,6 +409,11 @@ export class MakerPointsBot extends EventEmitter {
     }
 
     try {
+      if (this.isSpreadGuardCoolingDown()) {
+        log.debug('Spread guard cooldown active; skipping order checks');
+        return;
+      }
+
       // SAFETY CHECK: Verify position is zero
       const currentPosition = await this.orderManager.getCurrentPosition();
       if (currentPosition.abs().gte(new Decimal('0.00001'))) {
@@ -460,6 +476,11 @@ export class MakerPointsBot extends EventEmitter {
    */
   private async replaceOrder(side: OrderSide): Promise<void> {
     try {
+      if (this.isSpreadGuardCoolingDown()) {
+        log.info(`Spread guard cooldown active; skipping ${side.toUpperCase()} order replacement`);
+        return;
+      }
+
       const order = side === 'buy' ? this.state.buyOrder : this.state.sellOrder;
 
       if (!order) {
@@ -511,6 +532,120 @@ export class MakerPointsBot extends EventEmitter {
     } catch (error: any) {
       log.error(`Error replacing ${side} order: ${error.message}`);
     }
+  }
+
+  private async checkSpreadGuard(data: WSMarkPriceData): Promise<void> {
+    if (!data.indexPrice || this.markPrice.eq(0)) {
+      return;
+    }
+
+    const indexPrice = new Decimal(data.indexPrice);
+    const spreadBp = this.markPrice
+      .minus(indexPrice)
+      .abs()
+      .div(this.markPrice)
+      .mul(10000)
+      .toNumber();
+
+    this.recordSpreadSample(spreadBp);
+
+    const quantileMax = this.calculateQuantile(this.spreadSamples, this.config.spreadGuard.maxQuantile);
+    const volatility = this.calculateVolatility(this.spreadVolSamples);
+    const { regime, multiplier } = this.classifySpreadRegime(volatility);
+
+    const baseJumpSpreadBp = this.config.spreadGuard.jumpSpreadBp;
+    const baseMaxSpreadBp = this.config.spreadGuard.maxSpreadBp;
+    const cappedMaxSpreadBp = quantileMax ?? Number.POSITIVE_INFINITY;
+    const jumpSpreadBp = baseJumpSpreadBp * multiplier;
+    const maxSpreadBp = Math.min(baseMaxSpreadBp * multiplier, cappedMaxSpreadBp);
+
+    const spreadJumpBp = this.lastSpreadBp === null ? 0 : Math.abs(spreadBp - this.lastSpreadBp);
+    this.lastSpreadBp = spreadBp;
+
+    if (this.isSpreadGuardCoolingDown()) {
+      return;
+    }
+
+    const triggerReasons: string[] = [];
+    if (spreadBp > maxSpreadBp) {
+      triggerReasons.push(`spread=${spreadBp.toFixed(2)}bp > max=${maxSpreadBp.toFixed(2)}bp`);
+    }
+    if (spreadJumpBp > jumpSpreadBp) {
+      triggerReasons.push(`jump=${spreadJumpBp.toFixed(2)}bp > jumpMax=${jumpSpreadBp.toFixed(2)}bp`);
+    }
+
+    if (triggerReasons.length === 0) {
+      return;
+    }
+
+    this.spreadGuardCooldownUntil = Date.now() + this.config.spreadGuard.cooldownMs;
+
+    log.warn(`⚠️ Spread guard triggered (regime=${regime}) ${triggerReasons.join(', ')}`);
+    log.warn(`  quantileCap=${quantileMax ? `${quantileMax.toFixed(2)}bp` : 'n/a'} volatility=${volatility.toFixed(2)}bp`);
+
+    await this.orderManager.cancelAllOrders();
+
+    if (telegram.isEnabled()) {
+      await telegram.warning(
+        `Spread guard triggered (regime=${regime}): ${triggerReasons.join(', ')}`
+      );
+    }
+  }
+
+  private recordSpreadSample(spreadBp: number): void {
+    this.spreadSamples.push(spreadBp);
+    if (this.spreadSamples.length > this.config.spreadGuard.lookbackSamples) {
+      this.spreadSamples.shift();
+    }
+
+    this.spreadVolSamples.push(spreadBp);
+    if (this.spreadVolSamples.length > this.config.spreadGuard.volLookbackSamples) {
+      this.spreadVolSamples.shift();
+    }
+  }
+
+  private calculateQuantile(values: number[], quantile: number): number | null {
+    if (values.length < 5) {
+      return null;
+    }
+
+    const sorted = [...values].sort((a, b) => a - b);
+    const position = (sorted.length - 1) * quantile;
+    const lowerIndex = Math.floor(position);
+    const upperIndex = Math.ceil(position);
+
+    if (lowerIndex === upperIndex) {
+      return sorted[lowerIndex];
+    }
+
+    const weight = position - lowerIndex;
+    return sorted[lowerIndex] * (1 - weight) + sorted[upperIndex] * weight;
+  }
+
+  private calculateVolatility(values: number[]): number {
+    if (values.length < 2) {
+      return 0;
+    }
+
+    const mean = values.reduce((sum, value) => sum + value, 0) / values.length;
+    const variance = values.reduce((sum, value) => sum + (value - mean) ** 2, 0) / values.length;
+    return Math.sqrt(variance);
+  }
+
+  private classifySpreadRegime(volatility: number): { regime: 'low-vol' | 'normal' | 'high-vol'; multiplier: number } {
+    if (volatility >= this.config.spreadGuard.volHighThreshold) {
+      return { regime: 'high-vol', multiplier: 1.5 };
+    }
+
+    if (volatility <= this.config.spreadGuard.volLowThreshold) {
+      return { regime: 'low-vol', multiplier: 1 };
+    }
+
+    return { regime: 'normal', multiplier: 1 };
+  }
+
+  private isSpreadGuardCoolingDown(): boolean {
+    return Date.now() < this.spreadGuardCooldownUntil;
   }
 
   /**

@@ -65,6 +65,56 @@ const config = convict({
       env: 'TRADING_MAX_DISTANCE_BP'
     }
   },
+  spreadGuard: {
+    jumpSpreadBp: {
+      doc: 'Spread jump threshold in basis points for triggering guard',
+      format: Number,
+      default: 20,
+      env: 'SPREAD_GUARD_JUMP_SPREAD_BP'
+    },
+    maxSpreadBp: {
+      doc: 'Maximum spread in basis points before triggering guard',
+      format: Number,
+      default: 40,
+      env: 'SPREAD_GUARD_MAX_SPREAD_BP'
+    },
+    cooldownMs: {
+      doc: 'Cooldown duration after spread guard triggers (milliseconds)',
+      format: Number,
+      default: 30000,
+      env: 'SPREAD_GUARD_COOLDOWN_MS'
+    },
+    lookbackSamples: {
+      doc: 'Sample size for spread guard quantile calculation',
+      format: Number,
+      default: 50,
+      env: 'SPREAD_GUARD_LOOKBACK_SAMPLES'
+    },
+    maxQuantile: {
+      doc: 'Quantile used to cap max spread threshold',
+      format: Number,
+      default: 0.95,
+      env: 'SPREAD_GUARD_MAX_QUANTILE'
+    },
+    volLookbackSamples: {
+      doc: 'Sample size for spread volatility calculation',
+      format: Number,
+      default: 50,
+      env: 'SPREAD_GUARD_VOL_LOOKBACK_SAMPLES'
+    },
+    volHighThreshold: {
+      doc: 'High volatility threshold in basis points (std dev)',
+      format: Number,
+      default: 15,
+      env: 'SPREAD_GUARD_VOL_HIGH_THRESHOLD'
+    },
+    volLowThreshold: {
+      doc: 'Low volatility threshold in basis points (std dev)',
+      format: Number,
+      default: 5,
+      env: 'SPREAD_GUARD_VOL_LOW_THRESHOLD'
+    }
+  },
   telegram: {
     token: {
       doc: 'Telegram bot token',
