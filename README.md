@@ -134,7 +134,7 @@ TRADING_MAX_DISTANCE_BP=15                   # 最大距离（bp）
 ```bash
 TELEGRAM_TOKEN=your_bot_token
 TELEGRAM_CHAT_ID=your_chat_id
-TELEGRAM_ENABLED=false                        # true启用通知
+TELEGRAM_ENABLED=false                        # 默认关闭，需手动设为true启用
 ```
 
 #### 日志配置

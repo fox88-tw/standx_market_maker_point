@@ -79,9 +79,9 @@ const config = convict({
       env: 'TELEGRAM_CHAT_ID'
     },
     enabled: {
-      doc: 'Enable Telegram notifications',
+      doc: 'Enable Telegram notifications (must be explicitly enabled to send alerts)',
       format: Boolean,
-      default: true,
+      default: false,
       env: 'TELEGRAM_ENABLED'
     }
   },
