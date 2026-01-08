@@ -127,6 +127,16 @@ SPREAD_GUARD_POLL_INTERVAL_MS=1000           # 轮询间隔（ms）
 SPREAD_GUARD_COOLDOWN_MS=5000                # 触发撤单后的冷却时间（ms）
 ```
 
+#### 无历史数据时的安全起手式
+
+当没有历史数据时，可以先用更保守的实时估计作为起步：
+
+- `lookbackSamples=10~30`（约 10s~30s 的即时样本）
+- `jumpSpreadBp` 设为近期平均 spread 的 **3~5 倍**
+- `maxSpreadBp` 先设为近期平均 spread 的 **6~10 倍**
+
+但此作法仍是即时估计，容易在**流动性偏低的时段**误触发撤单。
+
 **参数详解**：
 
 - **TRADING_MODE**: 交易模式
