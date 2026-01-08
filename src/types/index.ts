@@ -101,6 +101,12 @@ export interface TradingConfig {
   orderDistanceBp: number;
   minDistanceBp: number;
   maxDistanceBp: number;
+  spreadJumpBp: number;
+  maxSpreadBp: number;
+  spreadBaselineWindow: number;
+  spreadCancelCooldownMs: number;
+  spreadCheckIntervalMs: number;
+  binanceSymbol: string;
 }
 
 export interface TelegramConfig {
