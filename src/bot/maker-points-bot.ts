@@ -3,6 +3,7 @@ import { EventEmitter } from 'eventemitter3';
 import { StandXAuth } from '../api/standx-auth';
 import { StandXClient } from '../api/standx-client';
 import { StandXWebSocket } from '../api/standx-websocket';
+import { BinanceClient } from '../api/binance-client';
 import { OrderManager } from './order-manager';
 import { telegram } from '../notify/telegram';
 import { log } from '../utils/logger';
@@ -18,6 +19,7 @@ export class MakerPointsBot extends EventEmitter {
   private client: StandXClient;
   private ws: StandXWebSocket;
   private orderManager: OrderManager;
+  private binanceClient: BinanceClient;
   private config = getConfig();
 
   // Bot state
@@ -25,6 +27,9 @@ export class MakerPointsBot extends EventEmitter {
   private markPrice: Decimal = Decimal(0);
   private stopRequested: boolean = false;
   private startTime: number;
+  private spreadSamples: Decimal[] = [];
+  private spreadGuardTimer?: NodeJS.Timeout;
+  private spreadGuardCooldownUntil = 0;
 
   constructor() {
     super();
@@ -40,6 +45,7 @@ export class MakerPointsBot extends EventEmitter {
     this.client = new StandXClient(this.auth);
     this.ws = new StandXWebSocket(this.auth);
     this.orderManager = new OrderManager(this.client, this.config.trading.symbol);
+    this.binanceClient = new BinanceClient(this.config.binance.baseUrl);
 
     // Initialize state
     this.startTime = Date.now();
@@ -100,6 +106,9 @@ export class MakerPointsBot extends EventEmitter {
       log.info('Placing initial orders...');
       await this.placeInitialOrders();
 
+      // Start spread guard monitoring
+      this.startSpreadGuard();
+
       // Send startup notification
       if (telegram.isEnabled()) {
         await telegram.startup();
@@ -130,6 +139,9 @@ export class MakerPointsBot extends EventEmitter {
 
       // Disconnect WebSocket
       this.ws.disconnect();
+
+      // Stop spread guard
+      this.stopSpreadGuard();
 
       // Send shutdown notification
       if (telegram.isEnabled()) {
@@ -398,6 +410,11 @@ export class MakerPointsBot extends EventEmitter {
     }
 
     try {
+      if (this.isSpreadGuardCoolingDown()) {
+        log.warn('⏸️ Spread guard cooldown active, skipping order replacement.');
+        return;
+      }
+
       // SAFETY CHECK: Verify position is zero
       const currentPosition = await this.orderManager.getCurrentPosition();
       if (currentPosition.abs().gte(new Decimal('0.00001'))) {
@@ -573,6 +590,97 @@ export class MakerPointsBot extends EventEmitter {
       log.error(`Error handling order filled: ${error.message}`);
       console.error(error.stack);
     }
+  }
+
+  private startSpreadGuard(): void {
+    if (!this.config.spreadGuard.enabled) {
+      log.info('Spread guard disabled.');
+      return;
+    }
+
+    if (this.spreadGuardTimer) {
+      clearInterval(this.spreadGuardTimer);
+    }
+
+    const intervalMs = this.config.spreadGuard.pollIntervalMs;
+    this.spreadGuardTimer = setInterval(() => {
+      this.checkBinanceSpread().catch((error: any) => {
+        log.error(`Spread guard error: ${error.message}`);
+      });
+    }, intervalMs);
+
+    log.info(`✅ Spread guard started (poll ${intervalMs} ms).`);
+  }
+
+  private stopSpreadGuard(): void {
+    if (this.spreadGuardTimer) {
+      clearInterval(this.spreadGuardTimer);
+      this.spreadGuardTimer = undefined;
+    }
+  }
+
+  private isSpreadGuardCoolingDown(): boolean {
+    return Date.now() < this.spreadGuardCooldownUntil;
+  }
+
+  private async checkBinanceSpread(): Promise<void> {
+    if (!this.state.isRunning || this.stopRequested) {
+      return;
+    }
+
+    const { symbol } = this.config.binance;
+    const { bestBid, bestAsk } = await this.binanceClient.fetchBbo(symbol);
+
+    if (bestBid.lte(0) || bestAsk.lte(0)) {
+      log.warn('Spread guard received invalid BBO data.');
+      return;
+    }
+
+    const mid = bestBid.plus(bestAsk).div(2);
+    const spreadBp = bestAsk.minus(bestBid).div(mid).mul(10000);
+
+    this.updateSpreadSamples(spreadBp);
+    const baseline = this.calculateSpreadBaseline();
+
+    const jumpThreshold = new Decimal(this.config.spreadGuard.jumpSpreadBp);
+    const maxSpread = new Decimal(this.config.spreadGuard.maxSpreadBp);
+
+    if (this.isSpreadGuardCoolingDown()) {
+      return;
+    }
+
+    const spreadJumped = baseline.gt(0) && spreadBp.minus(baseline).gte(jumpThreshold);
+    const spreadTooWide = spreadBp.gte(maxSpread);
+
+    if (spreadJumped || spreadTooWide) {
+      const reason = spreadTooWide
+        ? `spread ${spreadBp.toFixed(2)} bp ≥ max ${maxSpread.toFixed(2)} bp`
+        : `spread jumped ${spreadBp.toFixed(2)} bp (baseline ${baseline.toFixed(2)} bp)`;
+      log.warn(`🚨 Binance spread widening detected: ${reason}. Canceling orders.`);
+      await this.orderManager.cancelAllOrders();
+      this.spreadGuardCooldownUntil = Date.now() + this.config.spreadGuard.cooldownMs;
+
+      if (telegram.isEnabled()) {
+        await telegram.warning(`Spread guard triggered: ${reason}. Orders canceled.`);
+      }
+    }
+  }
+
+  private updateSpreadSamples(spreadBp: Decimal): void {
+    this.spreadSamples.push(spreadBp);
+    const maxSamples = this.config.spreadGuard.lookbackSamples;
+    if (this.spreadSamples.length > maxSamples) {
+      this.spreadSamples.shift();
+    }
+  }
+
+  private calculateSpreadBaseline(): Decimal {
+    if (this.spreadSamples.length === 0) {
+      return Decimal(0);
+    }
+
+    const total = this.spreadSamples.reduce((sum, value) => sum.plus(value), Decimal(0));
+    return total.div(this.spreadSamples.length);
   }
 
   /**

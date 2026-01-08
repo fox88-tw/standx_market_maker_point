@@ -65,6 +65,58 @@ const config = convict({
       env: 'TRADING_MAX_DISTANCE_BP'
     }
   },
+  binance: {
+    baseUrl: {
+      doc: 'Binance Futures REST base URL',
+      format: String,
+      default: 'https://fapi.binance.com',
+      env: 'BINANCE_FUTURES_BASE_URL'
+    },
+    symbol: {
+      doc: 'Binance Futures symbol for BBO monitoring',
+      format: String,
+      default: 'BTCUSDT',
+      env: 'BINANCE_FUTURES_SYMBOL'
+    }
+  },
+  spreadGuard: {
+    enabled: {
+      doc: 'Enable spread widening guard',
+      format: Boolean,
+      default: true,
+      env: 'SPREAD_GUARD_ENABLED'
+    },
+    jumpSpreadBp: {
+      doc: 'Spread jump threshold in basis points vs rolling baseline',
+      format: Number,
+      default: 5,
+      env: 'SPREAD_GUARD_JUMP_BP'
+    },
+    maxSpreadBp: {
+      doc: 'Absolute max spread in basis points',
+      format: Number,
+      default: 20,
+      env: 'SPREAD_GUARD_MAX_BP'
+    },
+    lookbackSamples: {
+      doc: 'Number of recent samples for spread baseline',
+      format: Number,
+      default: 10,
+      env: 'SPREAD_GUARD_LOOKBACK_SAMPLES'
+    },
+    pollIntervalMs: {
+      doc: 'Polling interval for Binance BBO in milliseconds',
+      format: Number,
+      default: 1000,
+      env: 'SPREAD_GUARD_POLL_INTERVAL_MS'
+    },
+    cooldownMs: {
+      doc: 'Cooldown after canceling orders due to spread widening',
+      format: Number,
+      default: 5000,
+      env: 'SPREAD_GUARD_COOLDOWN_MS'
+    }
+  },
   telegram: {
     token: {
       doc: 'Telegram bot token',

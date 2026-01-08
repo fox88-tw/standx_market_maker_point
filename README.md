@@ -9,6 +9,7 @@
 - ✅ **双阈值智能订单管理**（自动保持在积分范围内）
 - ✅ 订单成交立即市价平仓
 - ✅ 支持双侧/单侧挂单模式
+- ✅ Binance永续期货BBO价差突扩风控（立即取消挂单）
 - ✅ Telegram实时通知
 - ✅ 自动重连和错误恢复
 
@@ -106,6 +107,24 @@ TRADING_ORDER_SIZE_BTC=0.0001                # 订单大小（BTC）
 TRADING_ORDER_DISTANCE_BP=10                 # 目标距离（bp）
 TRADING_MIN_DISTANCE_BP=5                    # 最小距离（bp）
 TRADING_MAX_DISTANCE_BP=15                   # 最大距离（bp）
+```
+
+#### Binance永续期货BBO配置
+
+```bash
+BINANCE_FUTURES_BASE_URL=https://fapi.binance.com  # Binance合约REST
+BINANCE_FUTURES_SYMBOL=BTCUSDT                     # Binance合约交易对
+```
+
+#### 价差突扩风控（Spread Guard）
+
+```bash
+SPREAD_GUARD_ENABLED=true                    # 是否启用
+SPREAD_GUARD_JUMP_BP=5                       # 相对滚动基准的突扩阈值（bp）
+SPREAD_GUARD_MAX_BP=20                       # 绝对价差上限（bp）
+SPREAD_GUARD_LOOKBACK_SAMPLES=10             # 滚动样本数
+SPREAD_GUARD_POLL_INTERVAL_MS=1000           # 轮询间隔（ms）
+SPREAD_GUARD_COOLDOWN_MS=5000                # 触发撤单后的冷却时间（ms）
 ```
 
 **参数详解**：
