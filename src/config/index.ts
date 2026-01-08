@@ -104,6 +104,60 @@ const config = convict({
       default: 10,
       env: 'SPREAD_GUARD_LOOKBACK_SAMPLES'
     },
+    quantileSamples: {
+      doc: 'Number of samples for short-window spread quantile',
+      format: Number,
+      default: 60,
+      env: 'SPREAD_GUARD_QUANTILE_SAMPLES'
+    },
+    maxQuantile: {
+      doc: 'Quantile for dynamic max spread threshold (0-1)',
+      format: Number,
+      default: 0.95,
+      env: 'SPREAD_GUARD_MAX_QUANTILE'
+    },
+    volLookbackSamples: {
+      doc: 'Number of samples for volatility regime detection',
+      format: Number,
+      default: 60,
+      env: 'SPREAD_GUARD_VOL_LOOKBACK_SAMPLES'
+    },
+    volHighThresholdBp: {
+      doc: 'Volatility threshold (bp) for high-vol regime',
+      format: Number,
+      default: 5,
+      env: 'SPREAD_GUARD_VOL_HIGH_THRESHOLD_BP'
+    },
+    volLowThresholdBp: {
+      doc: 'Volatility threshold (bp) for low-vol regime',
+      format: Number,
+      default: 1,
+      env: 'SPREAD_GUARD_VOL_LOW_THRESHOLD_BP'
+    },
+    highVolJumpMultiplier: {
+      doc: 'Jump threshold multiplier in high-vol regime',
+      format: Number,
+      default: 1.5,
+      env: 'SPREAD_GUARD_HIGH_VOL_JUMP_MULTIPLIER'
+    },
+    highVolMaxMultiplier: {
+      doc: 'Max spread multiplier in high-vol regime',
+      format: Number,
+      default: 1.5,
+      env: 'SPREAD_GUARD_HIGH_VOL_MAX_MULTIPLIER'
+    },
+    lowVolJumpMultiplier: {
+      doc: 'Jump threshold multiplier in low-vol regime',
+      format: Number,
+      default: 0.8,
+      env: 'SPREAD_GUARD_LOW_VOL_JUMP_MULTIPLIER'
+    },
+    lowVolMaxMultiplier: {
+      doc: 'Max spread multiplier in low-vol regime',
+      format: Number,
+      default: 0.8,
+      env: 'SPREAD_GUARD_LOW_VOL_MAX_MULTIPLIER'
+    },
     pollIntervalMs: {
       doc: 'Polling interval for Binance BBO in milliseconds',
       format: Number,

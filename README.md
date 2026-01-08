@@ -123,6 +123,15 @@ SPREAD_GUARD_ENABLED=true                    # 是否启用
 SPREAD_GUARD_JUMP_BP=5                       # 相对滚动基准的突扩阈值（bp）
 SPREAD_GUARD_MAX_BP=20                       # 绝对价差上限（bp）
 SPREAD_GUARD_LOOKBACK_SAMPLES=10             # 滚动样本数
+SPREAD_GUARD_QUANTILE_SAMPLES=60             # 短窗分位数样本数
+SPREAD_GUARD_MAX_QUANTILE=0.95               # 分位数阈值（0-1）
+SPREAD_GUARD_VOL_LOOKBACK_SAMPLES=60         # regime 波动样本数
+SPREAD_GUARD_VOL_HIGH_THRESHOLD_BP=5         # 高波动阈值（bp）
+SPREAD_GUARD_VOL_LOW_THRESHOLD_BP=1          # 低波动阈值（bp）
+SPREAD_GUARD_HIGH_VOL_JUMP_MULTIPLIER=1.5    # 高波动 jump 阈值乘数
+SPREAD_GUARD_HIGH_VOL_MAX_MULTIPLIER=1.5     # 高波动 max 阈值乘数
+SPREAD_GUARD_LOW_VOL_JUMP_MULTIPLIER=0.8     # 低波动 jump 阈值乘数
+SPREAD_GUARD_LOW_VOL_MAX_MULTIPLIER=0.8      # 低波动 max 阈值乘数
 SPREAD_GUARD_POLL_INTERVAL_MS=1000           # 轮询间隔（ms）
 SPREAD_GUARD_COOLDOWN_MS=5000                # 触发撤单后的冷却时间（ms）
 ```

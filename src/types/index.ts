@@ -113,6 +113,15 @@ export interface SpreadGuardConfig {
   jumpSpreadBp: number;
   maxSpreadBp: number;
   lookbackSamples: number;
+  quantileSamples: number;
+  maxQuantile: number;
+  volLookbackSamples: number;
+  volHighThresholdBp: number;
+  volLowThresholdBp: number;
+  highVolJumpMultiplier: number;
+  highVolMaxMultiplier: number;
+  lowVolJumpMultiplier: number;
+  lowVolMaxMultiplier: number;
   pollIntervalMs: number;
   cooldownMs: number;
 }

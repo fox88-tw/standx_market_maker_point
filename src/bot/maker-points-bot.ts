@@ -642,8 +642,11 @@ export class MakerPointsBot extends EventEmitter {
     this.updateSpreadSamples(spreadBp);
     const baseline = this.calculateSpreadBaseline();
 
-    const jumpThreshold = new Decimal(this.config.spreadGuard.jumpSpreadBp);
-    const maxSpread = new Decimal(this.config.spreadGuard.maxSpreadBp);
+    const jumpThresholdBase = new Decimal(this.config.spreadGuard.jumpSpreadBp);
+    const maxSpreadBase = this.calculateDynamicMaxSpread();
+    const { regime, jumpMultiplier, maxMultiplier, volatility } = this.getRegimeAdjustments();
+    const jumpThreshold = jumpThresholdBase.mul(jumpMultiplier);
+    const maxSpread = maxSpreadBase.mul(maxMultiplier);
 
     if (this.isSpreadGuardCoolingDown()) {
       return;
@@ -655,8 +658,10 @@ export class MakerPointsBot extends EventEmitter {
     if (spreadJumped || spreadTooWide) {
       const reason = spreadTooWide
         ? `spread ${spreadBp.toFixed(2)} bp ≥ max ${maxSpread.toFixed(2)} bp`
-        : `spread jumped ${spreadBp.toFixed(2)} bp (baseline ${baseline.toFixed(2)} bp)`;
-      log.warn(`🚨 Binance spread widening detected: ${reason}. Canceling orders.`);
+        : `spread jumped ${spreadBp.toFixed(2)} bp (baseline ${baseline.toFixed(2)} bp, jump ${jumpThreshold.toFixed(2)} bp)`;
+      log.warn(
+        `🚨 Binance spread widening detected (${regime} vol=${volatility.toFixed(2)} bp): ${reason}. Canceling orders.`
+      );
       await this.orderManager.cancelAllOrders();
       this.spreadGuardCooldownUntil = Date.now() + this.config.spreadGuard.cooldownMs;
 
@@ -668,19 +673,126 @@ export class MakerPointsBot extends EventEmitter {
 
   private updateSpreadSamples(spreadBp: Decimal): void {
     this.spreadSamples.push(spreadBp);
-    const maxSamples = this.config.spreadGuard.lookbackSamples;
+    const maxSamples = Math.max(
+      this.config.spreadGuard.lookbackSamples,
+      this.config.spreadGuard.quantileSamples,
+      this.config.spreadGuard.volLookbackSamples
+    );
     if (this.spreadSamples.length > maxSamples) {
       this.spreadSamples.shift();
     }
   }
 
   private calculateSpreadBaseline(): Decimal {
-    if (this.spreadSamples.length === 0) {
+    const samples = this.getRecentSamples(this.config.spreadGuard.lookbackSamples);
+    if (samples.length === 0) {
       return Decimal(0);
     }
 
-    const total = this.spreadSamples.reduce((sum, value) => sum.plus(value), Decimal(0));
-    return total.div(this.spreadSamples.length);
+    const total = samples.reduce((sum, value) => sum.plus(value), Decimal(0));
+    return total.div(samples.length);
+  }
+
+  private calculateDynamicMaxSpread(): Decimal {
+    const samples = this.getRecentSamples(this.config.spreadGuard.quantileSamples);
+    const quantile = this.config.spreadGuard.maxQuantile;
+    const quantileValue = this.calculateSpreadQuantile(samples, quantile);
+    if (quantileValue.gt(0)) {
+      return quantileValue;
+    }
+    return new Decimal(this.config.spreadGuard.maxSpreadBp);
+  }
+
+  private getRegimeAdjustments(): {
+    regime: 'low' | 'normal' | 'high';
+    volatility: Decimal;
+    jumpMultiplier: Decimal;
+    maxMultiplier: Decimal;
+  } {
+    const volSamples = this.getRecentSamples(this.config.spreadGuard.volLookbackSamples);
+    const volatility = this.calculateSpreadVolatility(volSamples);
+    const regime = this.determineSpreadRegime(volatility);
+
+    if (regime === 'high') {
+      return {
+        regime,
+        volatility,
+        jumpMultiplier: new Decimal(this.config.spreadGuard.highVolJumpMultiplier),
+        maxMultiplier: new Decimal(this.config.spreadGuard.highVolMaxMultiplier)
+      };
+    }
+
+    if (regime === 'low') {
+      return {
+        regime,
+        volatility,
+        jumpMultiplier: new Decimal(this.config.spreadGuard.lowVolJumpMultiplier),
+        maxMultiplier: new Decimal(this.config.spreadGuard.lowVolMaxMultiplier)
+      };
+    }
+
+    return {
+      regime: 'normal',
+      volatility,
+      jumpMultiplier: Decimal(1),
+      maxMultiplier: Decimal(1)
+    };
+  }
+
+  private getRecentSamples(limit: number): Decimal[] {
+    if (limit <= 0) {
+      return [];
+    }
+    return this.spreadSamples.slice(-limit);
+  }
+
+  private calculateSpreadQuantile(samples: Decimal[], quantile: number): Decimal {
+    if (samples.length === 0) {
+      return Decimal(0);
+    }
+
+    const clampedQuantile = Math.min(1, Math.max(0, quantile));
+    const sorted = samples
+      .map((value) => value.toNumber())
+      .sort((a, b) => a - b);
+
+    if (sorted.length === 1) {
+      return new Decimal(sorted[0]);
+    }
+
+    const position = (sorted.length - 1) * clampedQuantile;
+    const lowerIndex = Math.floor(position);
+    const upperIndex = Math.ceil(position);
+    const lowerValue = sorted[lowerIndex];
+    const upperValue = sorted[upperIndex];
+    const weight = position - lowerIndex;
+    const interpolated = lowerValue + (upperValue - lowerValue) * weight;
+    return new Decimal(interpolated);
+  }
+
+  private calculateSpreadVolatility(samples: Decimal[]): Decimal {
+    if (samples.length < 2) {
+      return Decimal(0);
+    }
+
+    const values = samples.map((value) => value.toNumber());
+    const mean = values.reduce((sum, value) => sum + value, 0) / values.length;
+    const variance =
+      values.reduce((sum, value) => sum + Math.pow(value - mean, 2), 0) / values.length;
+    return new Decimal(Math.sqrt(variance));
+  }
+
+  private determineSpreadRegime(volatility: Decimal): 'low' | 'normal' | 'high' {
+    const high = new Decimal(this.config.spreadGuard.volHighThresholdBp);
+    const low = new Decimal(this.config.spreadGuard.volLowThresholdBp);
+
+    if (volatility.gte(high)) {
+      return 'high';
+    }
+    if (volatility.lte(low)) {
+      return 'low';
+    }
+    return 'normal';
   }
 
   /**
