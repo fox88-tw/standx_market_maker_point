@@ -15,6 +15,12 @@ export class TelegramNotifier {
     this.chatId = config.telegram.chatId;
     this.enabled = config.telegram.enabled;
 
+    if (this.enabled && (!config.telegram.token || !this.chatId)) {
+      log.warn('Telegram notifications enabled but missing token or chat ID; disabling notifications');
+      this.enabled = false;
+      return;
+    }
+
     if (this.enabled && config.telegram.token) {
       try {
         this.bot = new TelegramBot(config.telegram.token, { polling: false });
