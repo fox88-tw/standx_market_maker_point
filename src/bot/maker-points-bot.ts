@@ -1,5 +1,6 @@
 import Decimal from 'decimal.js';
 import { EventEmitter } from 'eventemitter3';
+import axios from 'axios';
 import { StandXAuth } from '../api/standx-auth';
 import { StandXClient } from '../api/standx-client';
 import { StandXWebSocket } from '../api/standx-websocket';
@@ -25,6 +26,9 @@ export class MakerPointsBot extends EventEmitter {
   private markPrice: Decimal = Decimal(0);
   private stopRequested: boolean = false;
   private startTime: number;
+  private spreadSamples: Array<{ timestamp: number; spreadBp: Decimal }> = [];
+  private lastBinanceCheckAt: number = 0;
+  private lastSpreadGuardCancelAt: number = 0;
 
   constructor() {
     super();
@@ -407,6 +411,11 @@ export class MakerPointsBot extends EventEmitter {
         return;
       }
 
+      const spreadGuardTriggered = await this.enforceSpreadGuard();
+      if (spreadGuardTriggered) {
+        return;
+      }
+
       const minDistanceBp = this.config.trading.minDistanceBp;
       const maxDistanceBp = this.config.trading.maxDistanceBp;
 
@@ -453,6 +462,100 @@ export class MakerPointsBot extends EventEmitter {
     } catch (error: any) {
       log.error(`Error in check and replace: ${error.message}`);
     }
+  }
+
+  /**
+   * Fetch Binance BBO prices for spread guard
+   */
+  private async fetchBinanceBbo(): Promise<[Decimal, Decimal]> {
+    const baseUrl = this.config.binance.baseUrl.replace(/\/$/, '');
+    const symbol = this.config.binance.symbol;
+    const response = await axios.get(`${baseUrl}/api/v3/ticker/bookTicker`, {
+      params: { symbol }
+    });
+    const bidPrice = new Decimal(response.data.bidPrice || 0);
+    const askPrice = new Decimal(response.data.askPrice || 0);
+    return [bidPrice, askPrice];
+  }
+
+  /**
+   * Enforce spread guard based on Binance BBO data
+   */
+  private async enforceSpreadGuard(): Promise<boolean> {
+    if (!this.config.binance.enabled) {
+      return false;
+    }
+
+    const now = Date.now();
+    const cooldownMs = this.config.spreadGuard.cooldownMs;
+    if (this.lastSpreadGuardCancelAt > 0 && now - this.lastSpreadGuardCancelAt < cooldownMs) {
+      log.debug('Spread guard cooldown active, skipping order updates');
+      return true;
+    }
+
+    if (now - this.lastBinanceCheckAt < 1000) {
+      return false;
+    }
+    this.lastBinanceCheckAt = now;
+
+    try {
+      const [bestBid, bestAsk] = await this.fetchBinanceBbo();
+      if (bestBid.lte(0) || bestAsk.lte(0)) {
+        return false;
+      }
+
+      const spreadBp = bestAsk
+        .minus(bestBid)
+        .div(bestAsk.plus(bestBid).div(2))
+        .mul(10000);
+
+      this.recordSpreadSample(spreadBp, now);
+      const baseline = this.getBaselineSpreadBp();
+
+      const spreadJumpBp = new Decimal(this.config.spreadGuard.spreadJumpBp);
+      const maxSpreadBp = new Decimal(this.config.spreadGuard.maxSpreadBp);
+
+      const jumpDetected = baseline ? spreadBp.minus(baseline).gte(spreadJumpBp) : false;
+      const maxDetected = spreadBp.gte(maxSpreadBp);
+
+      if (jumpDetected || maxDetected) {
+        log.warn('⚠️ Spread guard triggered, canceling all orders');
+        log.warn(`  Binance ${this.config.binance.symbol} spread: ${spreadBp.toFixed(2)} bp`);
+        if (baseline) {
+          log.warn(`  Baseline spread: ${baseline.toFixed(2)} bp`);
+        }
+        await this.orderManager.cancelAllOrders();
+        this.lastSpreadGuardCancelAt = now;
+        return true;
+      }
+
+      return false;
+    } catch (error: any) {
+      log.warn(`Spread guard check failed: ${error.message}`);
+      return false;
+    }
+  }
+
+  private recordSpreadSample(spreadBp: Decimal, timestamp: number): void {
+    this.spreadSamples.push({ spreadBp, timestamp });
+    const lookbackWindowMs = this.config.spreadGuard.lookbackWindowMs;
+    const cutoff = timestamp - lookbackWindowMs;
+    this.spreadSamples = this.spreadSamples.filter(sample => sample.timestamp >= cutoff);
+    const rollingSamples = this.config.spreadGuard.rollingSamples;
+    if (this.spreadSamples.length > rollingSamples) {
+      this.spreadSamples = this.spreadSamples.slice(-rollingSamples);
+    }
+  }
+
+  private getBaselineSpreadBp(): Decimal | null {
+    if (this.spreadSamples.length === 0) {
+      return null;
+    }
+    const total = this.spreadSamples.reduce(
+      (sum, sample) => sum.plus(sample.spreadBp),
+      Decimal(0)
+    );
+    return total.div(this.spreadSamples.length);
   }
 
   /**
