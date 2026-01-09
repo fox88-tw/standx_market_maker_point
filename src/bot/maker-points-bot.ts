@@ -55,6 +55,11 @@ export class MakerPointsBot extends EventEmitter {
       position: Decimal(0),
       buyOrder: null,
       sellOrder: null,
+      lastReplaceAt: {
+        buy: 0,
+        sell: 0
+      },
+      minReplaceIntervalMs: this.config.trading.minReplaceIntervalMs,
       stats: {
         ordersPlaced: 0,
         ordersCanceled: 0,
@@ -432,6 +437,9 @@ export class MakerPointsBot extends EventEmitter {
 
       const minDistanceBp = this.config.trading.minDistanceBp;
       const maxDistanceBp = this.config.trading.maxDistanceBp;
+      const deadZoneBp = this.config.trading.replaceDeadZoneBp;
+      const minReplaceBp = new Decimal(minDistanceBp).minus(deadZoneBp);
+      const maxReplaceBp = new Decimal(maxDistanceBp).plus(deadZoneBp);
 
       // Check buy order
       if (this.state.buyOrder && this.state.buyOrder.status === 'OPEN') {
@@ -442,12 +450,16 @@ export class MakerPointsBot extends EventEmitter {
           .mul(10000);
 
         // Replace if too close (risk of fill) or too far (no points)
-        if (distance.lt(new Decimal(minDistanceBp))) {
-          log.info(`[BUY] Too close to mark price (${distance.toFixed(2)} bp < ${minDistanceBp} bp), canceling and replacing...`);
+        if (distance.lt(minReplaceBp)) {
+          log.info(`[BUY] Too close to mark price (${distance.toFixed(2)} bp < ${minReplaceBp.toFixed(2)} bp), canceling and replacing...`);
           await this.replaceOrder('buy');
+        } else if (distance.gt(maxReplaceBp)) {
+          log.info(`[BUY] Too far from mark price (${distance.toFixed(2)} bp > ${maxReplaceBp.toFixed(2)} bp), canceling and replacing...`);
+          await this.replaceOrder('buy');
+        } else if (distance.lt(new Decimal(minDistanceBp))) {
+          log.debug(`[BUY] Within dead-zone (${distance.toFixed(2)} bp < ${minDistanceBp} bp), skipping replace.`);
         } else if (distance.gt(new Decimal(maxDistanceBp))) {
-          log.info(`[BUY] Too far from mark price (${distance.toFixed(2)} bp > ${maxDistanceBp} bp), canceling and replacing...`);
-          await this.replaceOrder('buy');
+          log.debug(`[BUY] Within dead-zone (${distance.toFixed(2)} bp > ${maxDistanceBp} bp), skipping replace.`);
         } else {
           log.debug(`[BUY] Order in valid range: ${distance.toFixed(2)} bp [${minDistanceBp}-${maxDistanceBp} bp]`);
         }
@@ -462,12 +474,16 @@ export class MakerPointsBot extends EventEmitter {
           .mul(10000);
 
         // Replace if too close (risk of fill) or too far (no points)
-        if (distance.lt(new Decimal(minDistanceBp))) {
-          log.info(`[SELL] Too close to mark price (${distance.toFixed(2)} bp < ${minDistanceBp} bp), canceling and replacing...`);
+        if (distance.lt(minReplaceBp)) {
+          log.info(`[SELL] Too close to mark price (${distance.toFixed(2)} bp < ${minReplaceBp.toFixed(2)} bp), canceling and replacing...`);
           await this.replaceOrder('sell');
+        } else if (distance.gt(maxReplaceBp)) {
+          log.info(`[SELL] Too far from mark price (${distance.toFixed(2)} bp > ${maxReplaceBp.toFixed(2)} bp), canceling and replacing...`);
+          await this.replaceOrder('sell');
+        } else if (distance.lt(new Decimal(minDistanceBp))) {
+          log.debug(`[SELL] Within dead-zone (${distance.toFixed(2)} bp < ${minDistanceBp} bp), skipping replace.`);
         } else if (distance.gt(new Decimal(maxDistanceBp))) {
-          log.info(`[SELL] Too far from mark price (${distance.toFixed(2)} bp > ${maxDistanceBp} bp), canceling and replacing...`);
-          await this.replaceOrder('sell');
+          log.debug(`[SELL] Within dead-zone (${distance.toFixed(2)} bp > ${maxDistanceBp} bp), skipping replace.`);
         } else {
           log.debug(`[SELL] Order in valid range: ${distance.toFixed(2)} bp [${minDistanceBp}-${maxDistanceBp} bp]`);
         }
@@ -483,6 +499,13 @@ export class MakerPointsBot extends EventEmitter {
    */
   private async replaceOrder(side: OrderSide): Promise<void> {
     try {
+      const now = Date.now();
+      const lastReplaceAt = this.state.lastReplaceAt[side];
+      if (now - lastReplaceAt < this.state.minReplaceIntervalMs) {
+        log.debug(`[${side.toUpperCase()}] Replace throttled (${now - lastReplaceAt}ms < ${this.state.minReplaceIntervalMs}ms).`);
+        return;
+      }
+
       const order = side === 'buy' ? this.state.buyOrder : this.state.sellOrder;
 
       if (!order) {
@@ -517,6 +540,8 @@ export class MakerPointsBot extends EventEmitter {
         new Decimal(this.config.trading.orderSizeBtc),
         newPrice
       );
+
+      this.state.lastReplaceAt[side] = now;
 
       if (newOrder) {
         if (side === 'buy') {
