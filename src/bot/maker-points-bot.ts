@@ -30,6 +30,8 @@ export class MakerPointsBot extends EventEmitter {
   private spreadSamples: Decimal[] = [];
   private spreadGuardTimer?: NodeJS.Timeout;
   private spreadGuardCooldownUntil = 0;
+  private lastPositionCheckAt = 0;
+  private positionCheckIntervalMs = 2000;
 
   constructor() {
     super();
@@ -269,6 +271,7 @@ export class MakerPointsBot extends EventEmitter {
       const position = new Decimal(data.positionAmt || data.qty || 0);
       const previousPosition = this.state.position;
       this.state.position = position;
+      this.lastPositionCheckAt = Date.now();
 
       log.debug(`Position updated: ${previousPosition} → ${position} BTC`);
 
@@ -421,13 +424,18 @@ export class MakerPointsBot extends EventEmitter {
         return;
       }
 
-      // SAFETY CHECK: Verify position is zero
-      const currentPosition = await this.orderManager.getCurrentPosition();
-      if (currentPosition.abs().gte(new Decimal('0.00001'))) {
-        log.error(`⚠️⚠️⚠️ NON-ZERO POSITION DETECTED IN CHECK LOOP ⚠️⚠️⚠️`);
-        log.error(`  Position: ${currentPosition} BTC`);
-        await this.closeDetectedPosition(currentPosition);
-        return;
+      // SAFETY CHECK: Verify position is zero (periodic REST check)
+      const now = Date.now();
+      if (now - this.lastPositionCheckAt >= this.positionCheckIntervalMs) {
+        const currentPosition = await this.orderManager.getCurrentPosition();
+        this.lastPositionCheckAt = now;
+        this.state.position = currentPosition;
+        if (currentPosition.abs().gte(new Decimal('0.00001'))) {
+          log.error(`⚠️⚠️⚠️ NON-ZERO POSITION DETECTED IN CHECK LOOP ⚠️⚠️⚠️`);
+          log.error(`  Position: ${currentPosition} BTC`);
+          await this.closeDetectedPosition(currentPosition);
+          return;
+        }
       }
 
       const minDistanceBp = this.config.trading.minDistanceBp;
