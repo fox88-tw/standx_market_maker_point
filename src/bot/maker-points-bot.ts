@@ -28,7 +28,8 @@ export class MakerPointsBot extends EventEmitter {
   private markPrice: Decimal = Decimal(0);
   private stopRequested: boolean = false;
   private startTime: number;
-  private spreadSamples: number[] = [];
+  private binanceSpreadSamples: { spreadBp: Decimal; timestamp: number }[] = [];
+  private indexSpreadSamples: number[] = [];
   private spreadVolSamples: number[] = [];
   private lastSpreadBp: number | null = null;
   private spreadGuardCooldownUntil = 0;
@@ -535,7 +536,7 @@ export class MakerPointsBot extends EventEmitter {
         .div(bestAsk.plus(bestBid).div(2))
         .mul(10000);
 
-      this.recordSpreadSample(spreadBp, now);
+      this.recordBinanceSpreadSample(spreadBp, now);
       const baseline = this.getBaselineSpreadBp();
 
       const spreadJumpBp = new Decimal(this.config.spreadGuard.spreadJumpBp);
@@ -562,26 +563,26 @@ export class MakerPointsBot extends EventEmitter {
     }
   }
 
-  private recordSpreadSample(spreadBp: Decimal, timestamp: number): void {
-    this.spreadSamples.push({ spreadBp, timestamp });
+  private recordBinanceSpreadSample(spreadBp: Decimal, timestamp: number): void {
+    this.binanceSpreadSamples.push({ spreadBp, timestamp });
     const lookbackWindowMs = this.config.spreadGuard.lookbackWindowMs;
     const cutoff = timestamp - lookbackWindowMs;
-    this.spreadSamples = this.spreadSamples.filter(sample => sample.timestamp >= cutoff);
+    this.binanceSpreadSamples = this.binanceSpreadSamples.filter(sample => sample.timestamp >= cutoff);
     const rollingSamples = this.config.spreadGuard.rollingSamples;
-    if (this.spreadSamples.length > rollingSamples) {
-      this.spreadSamples = this.spreadSamples.slice(-rollingSamples);
+    if (this.binanceSpreadSamples.length > rollingSamples) {
+      this.binanceSpreadSamples = this.binanceSpreadSamples.slice(-rollingSamples);
     }
   }
 
   private getBaselineSpreadBp(): Decimal | null {
-    if (this.spreadSamples.length === 0) {
+    if (this.binanceSpreadSamples.length === 0) {
       return null;
     }
-    const total = this.spreadSamples.reduce(
+    const total = this.binanceSpreadSamples.reduce(
       (sum, sample) => sum.plus(sample.spreadBp),
       Decimal(0)
     );
-    return total.div(this.spreadSamples.length);
+    return total.div(this.binanceSpreadSamples.length);
   }
 
   /**
@@ -660,9 +661,9 @@ export class MakerPointsBot extends EventEmitter {
       .mul(10000)
       .toNumber();
 
-    this.recordSpreadSample(spreadBp);
+    this.recordIndexSpreadSample(spreadBp);
 
-    const quantileMax = this.calculateQuantile(this.spreadSamples, this.config.spreadGuard.maxQuantile);
+    const quantileMax = this.calculateQuantile(this.indexSpreadSamples, this.config.spreadGuard.maxQuantile);
     const volatility = this.calculateVolatility(this.spreadVolSamples);
     const { regime, multiplier } = this.classifySpreadRegime(volatility);
 
@@ -705,10 +706,10 @@ export class MakerPointsBot extends EventEmitter {
     }
   }
 
-  private recordSpreadSample(spreadBp: number): void {
-    this.spreadSamples.push(spreadBp);
-    if (this.spreadSamples.length > this.config.spreadGuard.lookbackSamples) {
-      this.spreadSamples.shift();
+  private recordIndexSpreadSample(spreadBp: number): void {
+    this.indexSpreadSamples.push(spreadBp);
+    if (this.indexSpreadSamples.length > this.config.spreadGuard.lookbackSamples) {
+      this.indexSpreadSamples.shift();
     }
 
     this.spreadVolSamples.push(spreadBp);
