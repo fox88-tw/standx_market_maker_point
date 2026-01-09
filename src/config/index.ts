@@ -169,6 +169,18 @@ const config = convict({
       format: Number,
       default: 5000,
       env: 'SPREAD_GUARD_COOLDOWN_MS'
+    },
+    basisDiffBp: {
+      doc: 'StandX mark vs Binance mid deviation threshold (bp) to relax spread guard sensitivity',
+      format: Number,
+      default: 30,
+      env: 'SPREAD_GUARD_BASIS_DIFF_BP'
+    },
+    basisDiffGuardMultiplier: {
+      doc: 'Multiplier applied to spread guard thresholds when basis diff exceeds threshold',
+      format: Number,
+      default: 2,
+      env: 'SPREAD_GUARD_BASIS_DIFF_GUARD_MULTIPLIER'
     }
   },
   telegram: {

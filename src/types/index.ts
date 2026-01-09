@@ -124,6 +124,8 @@ export interface SpreadGuardConfig {
   lowVolMaxMultiplier: number;
   pollIntervalMs: number;
   cooldownMs: number;
+  basisDiffBp: number;
+  basisDiffGuardMultiplier: number;
 }
 
 export interface TelegramConfig {
