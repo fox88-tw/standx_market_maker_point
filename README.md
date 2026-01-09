@@ -9,7 +9,6 @@
 - ✅ **双阈值智能订单管理**（自动保持在积分范围内）
 - ✅ 订单成交立即市价平仓
 - ✅ 支持双侧/单侧挂单模式
-- ✅ Binance永续期货BBO价差突扩风控（立即取消挂单）
 - ✅ Telegram实时通知
 - ✅ 自动重连和错误恢复
 
@@ -108,44 +107,6 @@ TRADING_ORDER_DISTANCE_BP=10                 # 目标距离（bp）
 TRADING_MIN_DISTANCE_BP=5                    # 最小距离（bp）
 TRADING_MAX_DISTANCE_BP=15                   # 最大距离（bp）
 ```
-
-#### Binance永续期货BBO配置
-
-```bash
-BINANCE_FUTURES_BASE_URL=https://fapi.binance.com  # Binance合约REST
-BINANCE_FUTURES_SYMBOL=BTCUSDT                     # Binance合约交易对
-```
-
-#### 价差突扩风控（Spread Guard）
-
-```bash
-SPREAD_GUARD_ENABLED=true                    # 是否启用
-SPREAD_GUARD_JUMP_BP=5                       # 相对滚动基准的突扩阈值（bp）
-SPREAD_GUARD_MAX_BP=20                       # 绝对价差上限（bp）
-SPREAD_GUARD_LOOKBACK_SAMPLES=10             # 滚动样本数
-SPREAD_GUARD_QUANTILE_SAMPLES=60             # 短窗分位数样本数
-SPREAD_GUARD_MAX_QUANTILE=0.95               # 分位数阈值（0-1）
-SPREAD_GUARD_VOL_LOOKBACK_SAMPLES=60         # regime 波动样本数
-SPREAD_GUARD_VOL_HIGH_THRESHOLD_BP=5         # 高波动阈值（bp）
-SPREAD_GUARD_VOL_LOW_THRESHOLD_BP=1          # 低波动阈值（bp）
-SPREAD_GUARD_HIGH_VOL_JUMP_MULTIPLIER=1.5    # 高波动 jump 阈值乘数
-SPREAD_GUARD_HIGH_VOL_MAX_MULTIPLIER=1.5     # 高波动 max 阈值乘数
-SPREAD_GUARD_LOW_VOL_JUMP_MULTIPLIER=0.8     # 低波动 jump 阈值乘数
-SPREAD_GUARD_LOW_VOL_MAX_MULTIPLIER=0.8      # 低波动 max 阈值乘数
-SPREAD_GUARD_POLL_INTERVAL_MS=1000           # 轮询间隔（ms）
-SPREAD_GUARD_COOLDOWN_MS=5000                # 触发撤单后的冷却时间（ms）
-```
-
-#### 无历史数据时的安全起手式（1+3方案）
-
-当没有历史数据时，建议用更稳健的即时代理作为起步，结合「短窗分位数 + 波动分区自适应」：
-
-- **方案1：短窗分位数做即时门槛**  
-  用最近 N 笔（例如 30~60）spread 计算 90~95% 分位数作为 `maxSpreadBp`，对极端值更鲁棒。
-- **方案3：分时段/分波动 regime 动态调整**  
-  即时波动升高时放宽 `jumpSpreadBp`/`maxSpreadBp`；流动性恢复后逐步收敛到常态阈值。
-
-此作法比「均值×倍数」更稳健，但在**流动性偏低的时段**仍可能误触发撤单。
 
 **参数详解**：
 
