@@ -101,6 +101,26 @@ export interface TradingConfig {
   orderDistanceBp: number;
   minDistanceBp: number;
   maxDistanceBp: number;
+  spreadJumpBp: number;
+  maxSpreadBp: number;
+  spreadBaselineWindow: number;
+  spreadCancelCooldownMs: number;
+  spreadCheckIntervalMs: number;
+  binanceSymbol: string;
+}
+
+export interface BinanceConfig {
+  enabled: boolean;
+  baseUrl: string;
+  symbol: string;
+}
+
+export interface SpreadGuardConfig {
+  spreadJumpBp: number;
+  maxSpreadBp: number;
+  lookbackWindowMs: number;
+  rollingSamples: number;
+  cooldownMs: number;
 }
 
 export interface SpreadGuardConfig {
