@@ -33,6 +33,7 @@ export class MakerPointsBot extends EventEmitter {
   private orderPlacedAt: { buy: number; sell: number } = { buy: 0, sell: 0 };
   private lastPositionCheckAt = 0;
   private positionCheckIntervalMs = 2000;
+  private useRegimeOrderDistances: boolean;
 
   constructor() {
     super();
@@ -49,6 +50,12 @@ export class MakerPointsBot extends EventEmitter {
     this.ws = new StandXWebSocket(this.auth);
     this.orderManager = new OrderManager(this.client, this.config.trading.symbol);
     this.binanceClient = new BinanceClient(this.config.binance.baseUrl);
+
+    this.useRegimeOrderDistances = [
+      process.env.TRADING_ORDER_DISTANCE_LOW_VOL_BP,
+      process.env.TRADING_ORDER_DISTANCE_NORMAL_VOL_BP,
+      process.env.TRADING_ORDER_DISTANCE_HIGH_VOL_BP
+    ].some((value) => value !== undefined && value !== '');
 
     // Initialize state
     this.startTime = Date.now();
@@ -875,14 +882,18 @@ export class MakerPointsBot extends EventEmitter {
   }
 
   private calculateDynamicOrderDistanceBp(): number {
+    if (!this.useRegimeOrderDistances) {
+      return this.config.trading.orderDistanceBp;
+    }
+
     const { regime } = this.getRegimeAdjustments();
     if (regime === 'high') {
-      return this.config.trading.orderDistanceHighVolBp || this.config.trading.orderDistanceBp;
+      return this.config.trading.orderDistanceHighVolBp;
     }
     if (regime === 'low') {
-      return this.config.trading.orderDistanceLowVolBp || this.config.trading.orderDistanceBp;
+      return this.config.trading.orderDistanceLowVolBp;
     }
-    return this.config.trading.orderDistanceNormalVolBp || this.config.trading.orderDistanceBp;
+    return this.config.trading.orderDistanceNormalVolBp;
   }
 
   private getOrderLiveMs(side: OrderSide): number {
