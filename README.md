@@ -7,9 +7,10 @@
 - ✅ 自动挂限价单赚取Maker Points
 - ✅ WebSocket实时价格监控
 - ✅ **双阈值智能订单管理**（自动保持在积分范围内）
-- ✅ 订单成交立即市价平仓
+- ✅ 订单成交可配置市价/限价平仓（限价超时自动回落市价）
 - ✅ 支持双侧/单侧挂单模式
-- ✅ Binance永续期货BBO价差突扩风控（立即取消挂单）
+- ✅ Binance永续期货BBO价差突扩风控（可基于StandX价差偏离降敏）
+- ✅ 波动regime自适应挂单距离与最短挂单时间（点数合规）
 - ✅ Telegram实时通知
 - ✅ 自动重连和错误恢复
 
@@ -53,6 +54,23 @@ BP = 111 / 93691 × 10000 = 11.85 bp
    - 如果 `distance > maxDistanceBp` → 太远了，吃不到积分 → 取消并重挂
    - 如果 `minDistanceBp ≤ distance ≤ maxDistanceBp` → ✅ 理想范围，保持订单
 3. **动态调整**：新订单使用当前mark price重新计算价格
+
+### 波动Regime自适应挂单距离
+
+挂单距离会根据 spread 的波动 regime 自动切换，以平衡点数收益与成交风险：
+
+- 低波动：使用更近距离（如 10bp），提升点数效率
+- 中波动：使用中等距离（如 15bp）
+- 高波动：使用更远距离（如 25bp），降低被动成交风险
+
+对应配置为 `TRADING_ORDER_DISTANCE_LOW_VOL_BP`、
+`TRADING_ORDER_DISTANCE_NORMAL_VOL_BP`、
+`TRADING_ORDER_DISTANCE_HIGH_VOL_BP`。
+
+### 最短挂单时间（点数合规）
+
+为了满足「挂单需在 orderbook ≥ 3 秒」的点数规则，系统会在订单未达到
+`TRADING_MIN_ORDER_LIVE_MS` 前，尽量避免因“过远”而撤单重挂。
 
 ### 价格变化响应
 
@@ -109,6 +127,13 @@ TRADING_MIN_DISTANCE_BP=5                    # 最小距离（bp）
 TRADING_MAX_DISTANCE_BP=15                   # 最大距离（bp）
 TRADING_MIN_REPLACE_INTERVAL_MS=1000         # 替换最小间隔（ms）
 TRADING_REPLACE_DEAD_ZONE_BP=2               # 替换缓冲带（bp）
+TRADING_ORDER_DISTANCE_LOW_VOL_BP=10         # 低波动挂单距离（bp）
+TRADING_ORDER_DISTANCE_NORMAL_VOL_BP=15      # 中波动挂单距离（bp）
+TRADING_ORDER_DISTANCE_HIGH_VOL_BP=25        # 高波动挂单距离（bp）
+TRADING_MIN_ORDER_LIVE_MS=3000               # 最短挂单时间（ms）
+TRADING_CLOSE_POSITION_MODE=market           # 平仓模式: market/limit
+TRADING_CLOSE_POSITION_OFFSET_BP=5           # 限价平仓偏移（bp）
+TRADING_CLOSE_POSITION_TIMEOUT_MS=3000       # 限价平仓超时（ms）
 ```
 
 #### Binance永续期货BBO配置
@@ -124,6 +149,7 @@ BINANCE_FUTURES_SYMBOL=BTCUSDT                     # Binance合约交易对
 SPREAD_GUARD_ENABLED=true                    # 是否启用
 SPREAD_GUARD_JUMP_BP=5                       # 相对滚动基准的突扩阈值（bp）
 SPREAD_GUARD_MAX_BP=20                       # 绝对价差上限（bp）
+SPREAD_GUARD_BASIS_DIFF_BP=15                # StandX vs Binance 偏离阈值（bp）
 SPREAD_GUARD_LOOKBACK_SAMPLES=10             # 滚动样本数
 SPREAD_GUARD_QUANTILE_SAMPLES=60             # 短窗分位数样本数
 SPREAD_GUARD_MAX_QUANTILE=0.95               # 分位数阈值（0-1）
