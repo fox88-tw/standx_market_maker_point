@@ -101,6 +101,58 @@ const config = convict({
       env: 'TRADING_BINANCE_SYMBOL'
     }
   },
+  binance: {
+    enabled: {
+      doc: 'Enable Binance BBO monitoring',
+      format: Boolean,
+      default: false,
+      env: 'BINANCE_ENABLED'
+    },
+    baseUrl: {
+      doc: 'Binance REST base URL',
+      format: String,
+      default: 'https://api.binance.com',
+      env: 'BINANCE_BASE_URL'
+    },
+    symbol: {
+      doc: 'Binance symbol for BBO monitoring (e.g. BTCUSDT)',
+      format: String,
+      default: 'BTCUSDT',
+      env: 'BINANCE_SYMBOL'
+    }
+  },
+  spreadGuard: {
+    spreadJumpBp: {
+      doc: 'Spread jump threshold in basis points versus baseline',
+      format: Number,
+      default: 20,
+      env: 'SPREAD_JUMP_BP'
+    },
+    maxSpreadBp: {
+      doc: 'Hard max spread threshold in basis points',
+      format: Number,
+      default: 50,
+      env: 'MAX_SPREAD_BP'
+    },
+    lookbackWindowMs: {
+      doc: 'Lookback window for baseline spread calculation',
+      format: Number,
+      default: 60000,
+      env: 'SPREAD_GUARD_LOOKBACK_WINDOW_MS'
+    },
+    rollingSamples: {
+      doc: 'Max rolling samples for baseline spread calculation',
+      format: Number,
+      default: 30,
+      env: 'SPREAD_GUARD_ROLLING_SAMPLES'
+    },
+    cooldownMs: {
+      doc: 'Cooldown in milliseconds after canceling orders from spread guard',
+      format: Number,
+      default: 15000,
+      env: 'SPREAD_GUARD_COOLDOWN_MS'
+    }
+  },
   telegram: {
     token: {
       doc: 'Telegram bot token',

@@ -109,6 +109,20 @@ export interface TradingConfig {
   binanceSymbol: string;
 }
 
+export interface BinanceConfig {
+  enabled: boolean;
+  baseUrl: string;
+  symbol: string;
+}
+
+export interface SpreadGuardConfig {
+  spreadJumpBp: number;
+  maxSpreadBp: number;
+  lookbackWindowMs: number;
+  rollingSamples: number;
+  cooldownMs: number;
+}
+
 export interface TelegramConfig {
   token: string;
   chatId: string;
@@ -124,6 +138,8 @@ export interface LoggingConfig {
 export interface Config {
   standx: StandXConfig;
   trading: TradingConfig;
+  binance: BinanceConfig;
+  spreadGuard: SpreadGuardConfig;
   telegram: TelegramConfig;
   logging: LoggingConfig;
 }
