@@ -32,6 +32,11 @@ export class MakerPointsBot extends EventEmitter {
   private spreadVolSamples: number[] = [];
   private lastSpreadBp: number | null = null;
   private spreadGuardCooldownUntil = 0;
+  private lastSpreadGuardCancelAt = 0;
+  private lastBinanceCheckAt = 0;
+  private spreadMonitorTimer?: NodeJS.Timeout;
+  private spreadCancelCooldownUntil = 0;
+  private spreadHistory: number[] = [];
 
   constructor() {
     super();
