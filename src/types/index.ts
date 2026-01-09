@@ -103,29 +103,6 @@ export interface TradingConfig {
   maxDistanceBp: number;
 }
 
-export interface BinanceConfig {
-  baseUrl: string;
-  symbol: string;
-}
-
-export interface SpreadGuardConfig {
-  enabled: boolean;
-  jumpSpreadBp: number;
-  maxSpreadBp: number;
-  lookbackSamples: number;
-  quantileSamples: number;
-  maxQuantile: number;
-  volLookbackSamples: number;
-  volHighThresholdBp: number;
-  volLowThresholdBp: number;
-  highVolJumpMultiplier: number;
-  highVolMaxMultiplier: number;
-  lowVolJumpMultiplier: number;
-  lowVolMaxMultiplier: number;
-  pollIntervalMs: number;
-  cooldownMs: number;
-}
-
 export interface TelegramConfig {
   token: string;
   chatId: string;
@@ -141,8 +118,6 @@ export interface LoggingConfig {
 export interface Config {
   standx: StandXConfig;
   trading: TradingConfig;
-  binance: BinanceConfig;
-  spreadGuard: SpreadGuardConfig;
   telegram: TelegramConfig;
   logging: LoggingConfig;
 }

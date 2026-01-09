@@ -3,7 +3,6 @@ import { EventEmitter } from 'eventemitter3';
 import { StandXAuth } from '../api/standx-auth';
 import { StandXClient } from '../api/standx-client';
 import { StandXWebSocket } from '../api/standx-websocket';
-import { BinanceClient } from '../api/binance-client';
 import { OrderManager } from './order-manager';
 import { telegram } from '../notify/telegram';
 import { log } from '../utils/logger';
@@ -19,7 +18,6 @@ export class MakerPointsBot extends EventEmitter {
   private client: StandXClient;
   private ws: StandXWebSocket;
   private orderManager: OrderManager;
-  private binanceClient: BinanceClient;
   private config = getConfig();
 
   // Bot state
@@ -27,9 +25,6 @@ export class MakerPointsBot extends EventEmitter {
   private markPrice: Decimal = Decimal(0);
   private stopRequested: boolean = false;
   private startTime: number;
-  private spreadSamples: Decimal[] = [];
-  private spreadGuardTimer?: NodeJS.Timeout;
-  private spreadGuardCooldownUntil = 0;
 
   constructor() {
     super();
@@ -45,7 +40,6 @@ export class MakerPointsBot extends EventEmitter {
     this.client = new StandXClient(this.auth);
     this.ws = new StandXWebSocket(this.auth);
     this.orderManager = new OrderManager(this.client, this.config.trading.symbol);
-    this.binanceClient = new BinanceClient(this.config.binance.baseUrl);
 
     // Initialize state
     this.startTime = Date.now();
@@ -106,9 +100,6 @@ export class MakerPointsBot extends EventEmitter {
       log.info('Placing initial orders...');
       await this.placeInitialOrders();
 
-      // Start spread guard monitoring
-      this.startSpreadGuard();
-
       // Send startup notification
       if (telegram.isEnabled()) {
         await telegram.startup();
@@ -139,9 +130,6 @@ export class MakerPointsBot extends EventEmitter {
 
       // Disconnect WebSocket
       this.ws.disconnect();
-
-      // Stop spread guard
-      this.stopSpreadGuard();
 
       // Send shutdown notification
       if (telegram.isEnabled()) {
@@ -410,17 +398,6 @@ export class MakerPointsBot extends EventEmitter {
     }
 
     try {
-      if (this.isSpreadGuardCoolingDown()) {
-        log.warn('⏸️ Spread guard cooldown active, skipping order replacement.');
-        return;
-      }
-
-      if (this.shouldRestoreOrders()) {
-        log.info('🔄 Spread guard cooldown ended; restoring orders.');
-        await this.placeInitialOrders();
-        return;
-      }
-
       // SAFETY CHECK: Verify position is zero
       const currentPosition = await this.orderManager.getCurrentPosition();
       if (currentPosition.abs().gte(new Decimal('0.00001'))) {
@@ -596,233 +573,6 @@ export class MakerPointsBot extends EventEmitter {
       log.error(`Error handling order filled: ${error.message}`);
       console.error(error.stack);
     }
-  }
-
-  private startSpreadGuard(): void {
-    if (!this.config.spreadGuard.enabled) {
-      log.info('Spread guard disabled.');
-      return;
-    }
-
-    if (this.spreadGuardTimer) {
-      clearInterval(this.spreadGuardTimer);
-    }
-
-    const intervalMs = this.config.spreadGuard.pollIntervalMs;
-    this.spreadGuardTimer = setInterval(() => {
-      this.checkBinanceSpread().catch((error: any) => {
-        log.error(`Spread guard error: ${error.message}`);
-      });
-    }, intervalMs);
-
-    log.info(`✅ Spread guard started (poll ${intervalMs} ms).`);
-  }
-
-  private stopSpreadGuard(): void {
-    if (this.spreadGuardTimer) {
-      clearInterval(this.spreadGuardTimer);
-      this.spreadGuardTimer = undefined;
-    }
-  }
-
-  private isSpreadGuardCoolingDown(): boolean {
-    return Date.now() < this.spreadGuardCooldownUntil;
-  }
-
-  private async checkBinanceSpread(): Promise<void> {
-    if (!this.state.isRunning || this.stopRequested) {
-      return;
-    }
-
-    const { symbol } = this.config.binance;
-    const { bestBid, bestAsk } = await this.binanceClient.fetchBbo(symbol);
-
-    if (bestBid.lte(0) || bestAsk.lte(0)) {
-      log.warn('Spread guard received invalid BBO data.');
-      return;
-    }
-
-    const mid = bestBid.plus(bestAsk).div(2);
-    const spreadBp = bestAsk.minus(bestBid).div(mid).mul(10000);
-
-    this.updateSpreadSamples(spreadBp);
-    const baseline = this.calculateSpreadBaseline();
-
-    const jumpThresholdBase = new Decimal(this.config.spreadGuard.jumpSpreadBp);
-    const maxSpreadBase = this.calculateDynamicMaxSpread();
-    const { regime, jumpMultiplier, maxMultiplier, volatility } = this.getRegimeAdjustments();
-    const jumpThreshold = jumpThresholdBase.mul(jumpMultiplier);
-    const maxSpread = maxSpreadBase.mul(maxMultiplier);
-
-    if (this.isSpreadGuardCoolingDown()) {
-      return;
-    }
-
-    const spreadJumped = baseline.gt(0) && spreadBp.minus(baseline).gte(jumpThreshold);
-    const spreadTooWide = spreadBp.gte(maxSpread);
-
-    if (spreadJumped || spreadTooWide) {
-      const reason = spreadTooWide
-        ? `spread ${spreadBp.toFixed(2)} bp ≥ max ${maxSpread.toFixed(2)} bp`
-        : `spread jumped ${spreadBp.toFixed(2)} bp (baseline ${baseline.toFixed(2)} bp, jump ${jumpThreshold.toFixed(2)} bp)`;
-      log.warn(
-        `🚨 Binance spread widening detected (${regime} vol=${volatility.toFixed(2)} bp): ${reason}. Canceling orders.`
-      );
-      await this.orderManager.cancelAllOrders();
-      this.state.buyOrder = null;
-      this.state.sellOrder = null;
-      this.spreadGuardCooldownUntil = Date.now() + this.config.spreadGuard.cooldownMs;
-
-      if (telegram.isEnabled()) {
-        await telegram.warning(`Spread guard triggered: ${reason}. Orders canceled.`);
-      }
-    }
-  }
-
-  private updateSpreadSamples(spreadBp: Decimal): void {
-    this.spreadSamples.push(spreadBp);
-    const maxSamples = Math.max(
-      this.config.spreadGuard.lookbackSamples,
-      this.config.spreadGuard.quantileSamples,
-      this.config.spreadGuard.volLookbackSamples
-    );
-    if (this.spreadSamples.length > maxSamples) {
-      this.spreadSamples.shift();
-    }
-  }
-
-  private calculateSpreadBaseline(): Decimal {
-    const samples = this.getRecentSamples(this.config.spreadGuard.lookbackSamples);
-    if (samples.length === 0) {
-      return Decimal(0);
-    }
-
-    const total = samples.reduce((sum, value) => sum.plus(value), Decimal(0));
-    return total.div(samples.length);
-  }
-
-  private calculateDynamicMaxSpread(): Decimal {
-    const samples = this.getRecentSamples(this.config.spreadGuard.quantileSamples);
-    const quantile = this.config.spreadGuard.maxQuantile;
-    const quantileValue = this.calculateSpreadQuantile(samples, quantile);
-    if (quantileValue.gt(0)) {
-      return quantileValue;
-    }
-    return new Decimal(this.config.spreadGuard.maxSpreadBp);
-  }
-
-  private getRegimeAdjustments(): {
-    regime: 'low' | 'normal' | 'high';
-    volatility: Decimal;
-    jumpMultiplier: Decimal;
-    maxMultiplier: Decimal;
-  } {
-    const volSamples = this.getRecentSamples(this.config.spreadGuard.volLookbackSamples);
-    const volatility = this.calculateSpreadVolatility(volSamples);
-    const regime = this.determineSpreadRegime(volatility);
-
-    if (regime === 'high') {
-      return {
-        regime,
-        volatility,
-        jumpMultiplier: new Decimal(this.config.spreadGuard.highVolJumpMultiplier),
-        maxMultiplier: new Decimal(this.config.spreadGuard.highVolMaxMultiplier)
-      };
-    }
-
-    if (regime === 'low') {
-      return {
-        regime,
-        volatility,
-        jumpMultiplier: new Decimal(this.config.spreadGuard.lowVolJumpMultiplier),
-        maxMultiplier: new Decimal(this.config.spreadGuard.lowVolMaxMultiplier)
-      };
-    }
-
-    return {
-      regime: 'normal',
-      volatility,
-      jumpMultiplier: Decimal(1),
-      maxMultiplier: Decimal(1)
-    };
-  }
-
-  private getRecentSamples(limit: number): Decimal[] {
-    if (limit <= 0) {
-      return [];
-    }
-    return this.spreadSamples.slice(-limit);
-  }
-
-  private calculateSpreadQuantile(samples: Decimal[], quantile: number): Decimal {
-    if (samples.length === 0) {
-      return Decimal(0);
-    }
-
-    const clampedQuantile = Math.min(1, Math.max(0, quantile));
-    const sorted = samples
-      .map((value) => value.toNumber())
-      .sort((a, b) => a - b);
-
-    if (sorted.length === 1) {
-      return new Decimal(sorted[0]);
-    }
-
-    const position = (sorted.length - 1) * clampedQuantile;
-    const lowerIndex = Math.floor(position);
-    const upperIndex = Math.ceil(position);
-    const lowerValue = sorted[lowerIndex];
-    const upperValue = sorted[upperIndex];
-    const weight = position - lowerIndex;
-    const interpolated = lowerValue + (upperValue - lowerValue) * weight;
-    return new Decimal(interpolated);
-  }
-
-  private calculateSpreadVolatility(samples: Decimal[]): Decimal {
-    if (samples.length < 2) {
-      return Decimal(0);
-    }
-
-    const values = samples.map((value) => value.toNumber());
-    const mean = values.reduce((sum, value) => sum + value, 0) / values.length;
-    const variance =
-      values.reduce((sum, value) => sum + Math.pow(value - mean, 2), 0) / values.length;
-    return new Decimal(Math.sqrt(variance));
-  }
-
-  private determineSpreadRegime(volatility: Decimal): 'low' | 'normal' | 'high' {
-    const high = new Decimal(this.config.spreadGuard.volHighThresholdBp);
-    const low = new Decimal(this.config.spreadGuard.volLowThresholdBp);
-
-    if (volatility.gte(high)) {
-      return 'high';
-    }
-    if (volatility.lte(low)) {
-      return 'low';
-    }
-    return 'normal';
-  }
-
-  private shouldRestoreOrders(): boolean {
-    if (!this.state.isRunning || this.stopRequested) {
-      return false;
-    }
-
-    if (this.isSpreadGuardCoolingDown()) {
-      return false;
-    }
-
-    if (this.markPrice.eq(0)) {
-      return false;
-    }
-
-    const mode = this.config.trading.mode;
-    const needsBuy = mode === 'both' || mode === 'buy';
-    const needsSell = mode === 'both' || mode === 'sell';
-    const buyOpen = this.state.buyOrder?.status === 'OPEN';
-    const sellOpen = this.state.sellOrder?.status === 'OPEN';
-
-    return (needsBuy && !buyOpen) || (needsSell && !sellOpen);
   }
 
   /**
