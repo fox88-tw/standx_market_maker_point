@@ -4,6 +4,7 @@ import axios from 'axios';
 import { StandXAuth } from '../api/standx-auth';
 import { StandXClient } from '../api/standx-client';
 import { StandXWebSocket } from '../api/standx-websocket';
+import { BinanceClient } from '../api/binance-client';
 import { OrderManager } from './order-manager';
 import { telegram } from '../notify/telegram';
 import { log } from '../utils/logger';
@@ -18,6 +19,7 @@ export class MakerPointsBot extends EventEmitter {
   private auth: StandXAuth;
   private client: StandXClient;
   private ws: StandXWebSocket;
+  private binanceClient: BinanceClient;
   private orderManager: OrderManager;
   private config = getConfig();
 
@@ -43,6 +45,7 @@ export class MakerPointsBot extends EventEmitter {
     // Initialize clients
     this.client = new StandXClient(this.auth);
     this.ws = new StandXWebSocket(this.auth);
+    this.binanceClient = new BinanceClient();
     this.orderManager = new OrderManager(this.client, this.config.trading.symbol);
 
     // Initialize state
@@ -104,6 +107,9 @@ export class MakerPointsBot extends EventEmitter {
       log.info('Placing initial orders...');
       await this.placeInitialOrders();
 
+      // Start spread monitor
+      this.startSpreadMonitor();
+
       // Send startup notification
       if (telegram.isEnabled()) {
         await telegram.startup();
@@ -131,6 +137,9 @@ export class MakerPointsBot extends EventEmitter {
 
       // Cancel all orders
       await this.orderManager.cancelAllOrders();
+
+      // Stop spread monitor
+      this.stopSpreadMonitor();
 
       // Disconnect WebSocket
       this.ws.disconnect();
@@ -337,6 +346,11 @@ export class MakerPointsBot extends EventEmitter {
    */
   private async placeInitialOrders(): Promise<void> {
     try {
+      if (this.isSpreadCancelCooldownActive()) {
+        log.warn('Spread cooldown active, skipping order placement');
+        return;
+      }
+
       const mode = this.config.trading.mode;
 
       // Cancel any existing orders
@@ -398,6 +412,10 @@ export class MakerPointsBot extends EventEmitter {
     }
 
     if (this.markPrice.eq(0)) {
+      return;
+    }
+
+    if (this.isSpreadCancelCooldownActive()) {
       return;
     }
 
@@ -563,6 +581,11 @@ export class MakerPointsBot extends EventEmitter {
    */
   private async replaceOrder(side: OrderSide): Promise<void> {
     try {
+      if (this.isSpreadCancelCooldownActive()) {
+        log.warn(`[${side.toUpperCase()}] Spread cooldown active, skipping order replace`);
+        return;
+      }
+
       const order = side === 'buy' ? this.state.buyOrder : this.state.sellOrder;
 
       if (!order) {
@@ -728,5 +751,108 @@ export class MakerPointsBot extends EventEmitter {
    */
   isRunning(): boolean {
     return this.state.isRunning;
+  }
+
+  private startSpreadMonitor(): void {
+    if (this.spreadMonitorTimer) {
+      clearInterval(this.spreadMonitorTimer);
+    }
+
+    const intervalMs = this.config.trading.spreadCheckIntervalMs;
+    this.spreadMonitorTimer = setInterval(() => {
+      this.checkSpreadAndCancelIfNeeded().catch(error => {
+        log.error(`Error in spread monitor: ${error.message}`);
+      });
+    }, intervalMs);
+
+    log.info(`Spread monitor started (interval ${intervalMs} ms)`);
+  }
+
+  private stopSpreadMonitor(): void {
+    if (this.spreadMonitorTimer) {
+      clearInterval(this.spreadMonitorTimer);
+      this.spreadMonitorTimer = undefined;
+    }
+  }
+
+  private isSpreadCancelCooldownActive(): boolean {
+    return Date.now() < this.spreadCancelCooldownUntil;
+  }
+
+  private getSpreadBaseline(): number | null {
+    if (this.spreadHistory.length === 0) {
+      return null;
+    }
+
+    const sum = this.spreadHistory.reduce((total, value) => total + value, 0);
+    return sum / this.spreadHistory.length;
+  }
+
+  private recordSpread(spreadBp: number): void {
+    this.spreadHistory.push(spreadBp);
+    const windowSize = this.config.trading.spreadBaselineWindow;
+
+    if (this.spreadHistory.length > windowSize) {
+      this.spreadHistory.shift();
+    }
+  }
+
+  private async checkSpreadAndCancelIfNeeded(): Promise<void> {
+    if (!this.state.isRunning || this.stopRequested) {
+      return;
+    }
+
+    try {
+      const ticker = await this.binanceClient.getBookTicker(this.config.trading.binanceSymbol);
+      const bestBid = new Decimal(ticker.bidPrice);
+      const bestAsk = new Decimal(ticker.askPrice);
+
+      if (bestBid.lte(0) || bestAsk.lte(0)) {
+        return;
+      }
+
+      const mid = bestBid.plus(bestAsk).div(2);
+      if (mid.eq(0)) {
+        return;
+      }
+
+      const spreadBp = bestAsk.minus(bestBid).div(mid).mul(10000).toNumber();
+      const baseline = this.getSpreadBaseline();
+      this.recordSpread(spreadBp);
+
+      const spreadJumpBp = baseline !== null ? spreadBp - baseline : 0;
+      const exceedsMaxSpread = spreadBp > this.config.trading.maxSpreadBp;
+      const exceedsJump = baseline !== null && spreadJumpBp > this.config.trading.spreadJumpBp;
+
+      if ((exceedsMaxSpread || exceedsJump) && !this.isSpreadCancelCooldownActive()) {
+        const reason = exceedsMaxSpread
+          ? `spread ${spreadBp.toFixed(2)} bp > max ${this.config.trading.maxSpreadBp} bp`
+          : `spread jump ${spreadJumpBp.toFixed(2)} bp > ${this.config.trading.spreadJumpBp} bp`;
+
+        log.warn(`Binance spread widened (${reason}), canceling orders`);
+        if (telegram.isEnabled()) {
+          await telegram.warning(`Binance spread widened (${reason}), canceling orders`);
+        }
+
+        await this.orderManager.cancelAllOrders();
+        this.spreadCancelCooldownUntil = Date.now() + this.config.trading.spreadCancelCooldownMs;
+      }
+
+      if (!this.isSpreadCancelCooldownActive() && this.shouldRestoreOrders()) {
+        await this.placeInitialOrders();
+      }
+    } catch (error: any) {
+      log.error(`Failed to fetch Binance spread: ${error.message}`);
+    }
+  }
+
+  private shouldRestoreOrders(): boolean {
+    const mode = this.config.trading.mode;
+    const needsBuy = mode === 'both' || mode === 'buy';
+    const needsSell = mode === 'both' || mode === 'sell';
+    const buyOpen = this.state.buyOrder?.status === 'OPEN';
+    const sellOpen = this.state.sellOrder?.status === 'OPEN';
+
+    return (needsBuy && !buyOpen) || (needsSell && !sellOpen);
   }
 }

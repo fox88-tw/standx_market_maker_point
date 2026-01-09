@@ -63,6 +63,42 @@ const config = convict({
       format: Number,
       default: 30,
       env: 'TRADING_MAX_DISTANCE_BP'
+    },
+    spreadJumpBp: {
+      doc: 'Spread jump threshold in basis points to trigger cancel',
+      format: Number,
+      default: 15,
+      env: 'TRADING_SPREAD_JUMP_BP'
+    },
+    maxSpreadBp: {
+      doc: 'Maximum spread in basis points to trigger cancel',
+      format: Number,
+      default: 50,
+      env: 'TRADING_MAX_SPREAD_BP'
+    },
+    spreadBaselineWindow: {
+      doc: 'Rolling window size for spread baseline',
+      format: Number,
+      default: 5,
+      env: 'TRADING_SPREAD_BASELINE_WINDOW'
+    },
+    spreadCancelCooldownMs: {
+      doc: 'Cooldown in ms after spread cancel before re-placing orders',
+      format: Number,
+      default: 15000,
+      env: 'TRADING_SPREAD_CANCEL_COOLDOWN_MS'
+    },
+    spreadCheckIntervalMs: {
+      doc: 'Interval in ms to check Binance spread',
+      format: Number,
+      default: 2000,
+      env: 'TRADING_SPREAD_CHECK_INTERVAL_MS'
+    },
+    binanceSymbol: {
+      doc: 'Binance symbol for spread monitoring',
+      format: String,
+      default: 'BTCUSDT',
+      env: 'TRADING_BINANCE_SYMBOL'
     }
   },
   binance: {
