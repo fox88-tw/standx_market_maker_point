@@ -415,6 +415,12 @@ export class MakerPointsBot extends EventEmitter {
         return;
       }
 
+      if (this.shouldRestoreOrders()) {
+        log.info('🔄 Spread guard cooldown ended; restoring orders.');
+        await this.placeInitialOrders();
+        return;
+      }
+
       // SAFETY CHECK: Verify position is zero
       const currentPosition = await this.orderManager.getCurrentPosition();
       if (currentPosition.abs().gte(new Decimal('0.00001'))) {
@@ -663,6 +669,8 @@ export class MakerPointsBot extends EventEmitter {
         `🚨 Binance spread widening detected (${regime} vol=${volatility.toFixed(2)} bp): ${reason}. Canceling orders.`
       );
       await this.orderManager.cancelAllOrders();
+      this.state.buyOrder = null;
+      this.state.sellOrder = null;
       this.spreadGuardCooldownUntil = Date.now() + this.config.spreadGuard.cooldownMs;
 
       if (telegram.isEnabled()) {
@@ -793,6 +801,28 @@ export class MakerPointsBot extends EventEmitter {
       return 'low';
     }
     return 'normal';
+  }
+
+  private shouldRestoreOrders(): boolean {
+    if (!this.state.isRunning || this.stopRequested) {
+      return false;
+    }
+
+    if (this.isSpreadGuardCoolingDown()) {
+      return false;
+    }
+
+    if (this.markPrice.eq(0)) {
+      return false;
+    }
+
+    const mode = this.config.trading.mode;
+    const needsBuy = mode === 'both' || mode === 'buy';
+    const needsSell = mode === 'both' || mode === 'sell';
+    const buyOpen = this.state.buyOrder?.status === 'OPEN';
+    const sellOpen = this.state.sellOrder?.status === 'OPEN';
+
+    return (needsBuy && !buyOpen) || (needsSell && !sellOpen);
   }
 
   /**
