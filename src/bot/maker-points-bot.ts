@@ -93,6 +93,18 @@ export class MakerPointsBot extends EventEmitter {
       await this.client.initialize(this.config.trading.symbol);
       log.info(`✅ Initialized for ${this.config.trading.symbol}`);
 
+      if (!this.auth.isLoggedIn()) {
+        await this.auth.login();
+      }
+
+      log.info(`Setting margin mode to ${this.config.trading.marginMode}...`);
+      await this.client.changeMarginMode(this.config.trading.symbol, this.config.trading.marginMode);
+      log.info(`✅ Margin mode set to ${this.config.trading.marginMode}`);
+
+      log.info(`Setting leverage to ${this.config.trading.leverage}x...`);
+      await this.client.changeLeverage(this.config.trading.symbol, this.config.trading.leverage);
+      log.info(`✅ Leverage set to ${this.config.trading.leverage}x`);
+
       // Connect WebSocket
       log.info('Connecting to WebSocket...');
       await this.ws.connect();

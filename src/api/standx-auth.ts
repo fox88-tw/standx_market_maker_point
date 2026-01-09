@@ -115,6 +115,13 @@ export class StandXAuth {
   }
 
   /**
+   * Check if access token is available
+   */
+  isLoggedIn(): boolean {
+    return this.accessToken !== null;
+  }
+
+  /**
    * Get request ID
    */
   getRequestId(): string {

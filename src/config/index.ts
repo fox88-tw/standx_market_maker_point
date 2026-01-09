@@ -40,6 +40,18 @@ const config = convict({
       default: 'both',
       env: 'TRADING_MODE'
     },
+    leverage: {
+      doc: 'Leverage multiple applied at startup',
+      format: 'int',
+      default: 10,
+      env: 'TRADING_LEVERAGE'
+    },
+    marginMode: {
+      doc: 'Margin mode (cross or isolated)',
+      format: ['cross', 'isolated'],
+      default: 'isolated',
+      env: 'TRADING_MARGIN_MODE'
+    },
     orderSizeBtc: {
       doc: 'Order size in BTC',
       format: Number,
