@@ -18,6 +18,8 @@ export class StandXAuth {
   private ed25519PublicKey: Uint8Array;
   private requestId: string;
   private accessToken: string | null = null;
+  private tokenExpiresAt: number | null = null;
+  private tokenExpiryBufferMs: number = 60000;
 
   constructor(privateKey: string, address: string, chain: string = 'bsc') {
     this.privateKey = privateKey;
@@ -78,6 +80,7 @@ export class StandXAuth {
       if (!this.accessToken) {
         throw new Error('No token in login response');
       }
+      this.tokenExpiresAt = this.getTokenExpiry(this.accessToken, 604800);
 
       return this.accessToken;
     } catch (error: any) {
@@ -118,7 +121,15 @@ export class StandXAuth {
    * Check if access token is available
    */
   isLoggedIn(): boolean {
-    return this.accessToken !== null;
+    if (!this.accessToken) {
+      return false;
+    }
+
+    if (!this.tokenExpiresAt) {
+      return true;
+    }
+
+    return Date.now() < this.tokenExpiresAt - this.tokenExpiryBufferMs;
   }
 
   /**
@@ -126,5 +137,25 @@ export class StandXAuth {
    */
   getRequestId(): string {
     return this.requestId;
+  }
+
+  private getTokenExpiry(token: string, fallbackExpiresSeconds: number): number {
+    const tokenParts = token.split('.');
+    if (tokenParts.length < 2) {
+      return Date.now() + fallbackExpiresSeconds * 1000;
+    }
+
+    try {
+      const payload = JSON.parse(
+        Buffer.from(tokenParts[1], 'base64url').toString('utf-8')
+      );
+      if (typeof payload.exp === 'number') {
+        return payload.exp * 1000;
+      }
+    } catch (error) {
+      // Fall back to configured expiry below.
+    }
+
+    return Date.now() + fallbackExpiresSeconds * 1000;
   }
 }
