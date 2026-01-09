@@ -168,10 +168,43 @@ export class OrderManager {
   }
 
   /**
-   * Close position with market order
+   * Close position with market or limit order
    */
-  async closePosition(qty: Decimal, side: OrderSide): Promise<boolean> {
+  async closePosition(
+    qty: Decimal,
+    side: OrderSide,
+    options: {
+      mode?: 'market' | 'limit';
+      price?: Decimal;
+      timeoutMs?: number;
+    } = {}
+  ): Promise<boolean> {
     try {
+      const mode = options.mode ?? 'market';
+      if (mode === 'limit') {
+        if (!options.price) {
+          log.error('Missing limit price for close position');
+          return false;
+        }
+        const timeoutMs = options.timeoutMs ?? 3000;
+        log.warn(`🔄 Closing ${side} position: ${qty} BTC with LIMIT order @ ${options.price}`);
+
+        const result = await this.placeOrder(side, qty, options.price, true, 'limit');
+        if (!result) {
+          log.error('Failed to place close limit order');
+          return false;
+        }
+
+        const filledOrder = await this.waitForOrderFill(result.orderId, timeoutMs);
+        if (filledOrder && filledOrder.status === 'FILLED') {
+          log.warn(`✅ Position closed via limit: ${qty} BTC`);
+          return true;
+        }
+
+        log.warn('Limit close not filled in time, canceling and falling back to market');
+        await this.cancelOrder(result.orderId);
+      }
+
       log.warn(`🔄 Closing ${side} position: ${qty} BTC with MARKET order`);
 
       // Use MARKET order for immediate fill

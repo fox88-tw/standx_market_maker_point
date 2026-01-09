@@ -52,6 +52,24 @@ const config = convict({
       default: 20,
       env: 'TRADING_ORDER_DISTANCE_BP'
     },
+    orderDistanceLowVolBp: {
+      doc: 'Order distance in low volatility regime (bps)',
+      format: Number,
+      default: 10,
+      env: 'TRADING_ORDER_DISTANCE_LOW_VOL_BP'
+    },
+    orderDistanceNormalVolBp: {
+      doc: 'Order distance in normal volatility regime (bps)',
+      format: Number,
+      default: 15,
+      env: 'TRADING_ORDER_DISTANCE_NORMAL_VOL_BP'
+    },
+    orderDistanceHighVolBp: {
+      doc: 'Order distance in high volatility regime (bps)',
+      format: Number,
+      default: 25,
+      env: 'TRADING_ORDER_DISTANCE_HIGH_VOL_BP'
+    },
     minDistanceBp: {
       doc: 'Minimum distance in basis points (too close = risk of fill)',
       format: Number,
@@ -75,6 +93,30 @@ const config = convict({
       format: Number,
       default: 2,
       env: 'TRADING_REPLACE_DEAD_ZONE_BP'
+    },
+    minOrderLiveMs: {
+      doc: 'Minimum time for an order to stay live to earn maker points (ms)',
+      format: Number,
+      default: 3000,
+      env: 'TRADING_MIN_ORDER_LIVE_MS'
+    },
+    closePositionMode: {
+      doc: 'Close position mode (market or limit)',
+      format: ['market', 'limit'],
+      default: 'market',
+      env: 'TRADING_CLOSE_POSITION_MODE'
+    },
+    closePositionOffsetBp: {
+      doc: 'Offset in basis points for limit close orders',
+      format: Number,
+      default: 5,
+      env: 'TRADING_CLOSE_POSITION_OFFSET_BP'
+    },
+    closePositionTimeoutMs: {
+      doc: 'Timeout for limit close orders before falling back to market (ms)',
+      format: Number,
+      default: 3000,
+      env: 'TRADING_CLOSE_POSITION_TIMEOUT_MS'
     }
   },
   binance: {
@@ -109,6 +151,12 @@ const config = convict({
       format: Number,
       default: 20,
       env: 'SPREAD_GUARD_MAX_BP'
+    },
+    basisDiffBp: {
+      doc: 'Max StandX vs Binance basis difference (bp) before softening guard',
+      format: Number,
+      default: 15,
+      env: 'SPREAD_GUARD_BASIS_DIFF_BP'
     },
     lookbackSamples: {
       doc: 'Number of recent samples for spread baseline',

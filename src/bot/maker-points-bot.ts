@@ -30,6 +30,7 @@ export class MakerPointsBot extends EventEmitter {
   private spreadSamples: Decimal[] = [];
   private spreadGuardTimer?: NodeJS.Timeout;
   private spreadGuardCooldownUntil = 0;
+  private orderPlacedAt: { buy: number; sell: number } = { buy: 0, sell: 0 };
   private lastPositionCheckAt = 0;
   private positionCheckIntervalMs = 2000;
 
@@ -62,6 +63,7 @@ export class MakerPointsBot extends EventEmitter {
         sell: 0
       },
       minReplaceIntervalMs: this.config.trading.minReplaceIntervalMs,
+      minOrderLiveMs: this.config.trading.minOrderLiveMs,
       stats: {
         ordersPlaced: 0,
         ordersCanceled: 0,
@@ -143,6 +145,7 @@ export class MakerPointsBot extends EventEmitter {
 
       // Cancel all orders
       await this.orderManager.cancelAllOrders();
+      this.orderPlacedAt = { buy: 0, sell: 0 };
 
       // Disconnect WebSocket
       this.ws.disconnect();
@@ -249,11 +252,17 @@ export class MakerPointsBot extends EventEmitter {
       if (this.state.buyOrder && this.state.buyOrder.orderId === orderId) {
         this.state.buyOrder.status = status;
         this.state.buyOrder.filledQty = new Decimal(data.fillQty);
+        if (status === 'FILLED' || status === 'CANCELED' || status === 'FAILED') {
+          this.orderPlacedAt.buy = 0;
+        }
       }
 
       if (this.state.sellOrder && this.state.sellOrder.orderId === orderId) {
         this.state.sellOrder.status = status;
         this.state.sellOrder.filledQty = new Decimal(data.fillQty);
+        if (status === 'FILLED' || status === 'CANCELED' || status === 'FAILED') {
+          this.orderPlacedAt.sell = 0;
+        }
       }
 
       // Check if order was filled
@@ -312,9 +321,9 @@ export class MakerPointsBot extends EventEmitter {
 
       // Cancel all pending orders first
       await this.orderManager.cancelAllOrders();
+      this.orderPlacedAt = { buy: 0, sell: 0 };
 
-      // Close position with market order
-      const closed = await this.orderManager.closePosition(positionSize, closeSide);
+      const closed = await this.closePositionWithPolicy(positionSize, closeSide);
 
       if (!closed) {
         log.error('❌ Failed to close position!');
@@ -354,6 +363,7 @@ export class MakerPointsBot extends EventEmitter {
   private async placeInitialOrders(): Promise<void> {
     try {
       const mode = this.config.trading.mode;
+      const distanceBp = this.calculateDynamicOrderDistanceBp();
 
       // Cancel any existing orders
       await this.orderManager.cancelAllOrders();
@@ -363,7 +373,7 @@ export class MakerPointsBot extends EventEmitter {
         const buyPrice = this.orderManager.calculateOrderPrice(
           'buy',
           this.markPrice,
-          this.config.trading.orderDistanceBp
+          distanceBp
         );
 
         const buyOrder = await this.orderManager.placeOrder(
@@ -374,6 +384,7 @@ export class MakerPointsBot extends EventEmitter {
 
         if (buyOrder) {
           this.state.buyOrder = buyOrder;
+          this.orderPlacedAt.buy = Date.now();
           this.state.stats.ordersPlaced++;
         }
       }
@@ -382,7 +393,7 @@ export class MakerPointsBot extends EventEmitter {
         const sellPrice = this.orderManager.calculateOrderPrice(
           'sell',
           this.markPrice,
-          this.config.trading.orderDistanceBp
+          distanceBp
         );
 
         const sellOrder = await this.orderManager.placeOrder(
@@ -393,6 +404,7 @@ export class MakerPointsBot extends EventEmitter {
 
         if (sellOrder) {
           this.state.sellOrder = sellOrder;
+          this.orderPlacedAt.sell = Date.now();
           this.state.stats.ordersPlaced++;
         }
       }
@@ -456,14 +468,19 @@ export class MakerPointsBot extends EventEmitter {
           .abs()
           .div(this.state.buyOrder.price)
           .mul(10000);
+        const orderLiveMs = this.getOrderLiveMs('buy');
 
         // Replace if too close (risk of fill) or too far (no points)
         if (distance.lt(minReplaceBp)) {
           log.info(`[BUY] Too close to mark price (${distance.toFixed(2)} bp < ${minReplaceBp.toFixed(2)} bp), canceling and replacing...`);
           await this.replaceOrder('buy');
         } else if (distance.gt(maxReplaceBp)) {
-          log.info(`[BUY] Too far from mark price (${distance.toFixed(2)} bp > ${maxReplaceBp.toFixed(2)} bp), canceling and replacing...`);
-          await this.replaceOrder('buy');
+          if (!this.hasMetMinLiveTime(orderLiveMs)) {
+            log.debug(`[BUY] Order live ${orderLiveMs}ms < ${this.state.minOrderLiveMs}ms, keeping to earn points.`);
+          } else {
+            log.info(`[BUY] Too far from mark price (${distance.toFixed(2)} bp > ${maxReplaceBp.toFixed(2)} bp), canceling and replacing...`);
+            await this.replaceOrder('buy');
+          }
         } else if (distance.lt(new Decimal(minDistanceBp))) {
           log.debug(`[BUY] Within dead-zone (${distance.toFixed(2)} bp < ${minDistanceBp} bp), skipping replace.`);
         } else if (distance.gt(new Decimal(maxDistanceBp))) {
@@ -480,14 +497,19 @@ export class MakerPointsBot extends EventEmitter {
           .abs()
           .div(this.state.sellOrder.price)
           .mul(10000);
+        const orderLiveMs = this.getOrderLiveMs('sell');
 
         // Replace if too close (risk of fill) or too far (no points)
         if (distance.lt(minReplaceBp)) {
           log.info(`[SELL] Too close to mark price (${distance.toFixed(2)} bp < ${minReplaceBp.toFixed(2)} bp), canceling and replacing...`);
           await this.replaceOrder('sell');
         } else if (distance.gt(maxReplaceBp)) {
-          log.info(`[SELL] Too far from mark price (${distance.toFixed(2)} bp > ${maxReplaceBp.toFixed(2)} bp), canceling and replacing...`);
-          await this.replaceOrder('sell');
+          if (!this.hasMetMinLiveTime(orderLiveMs)) {
+            log.debug(`[SELL] Order live ${orderLiveMs}ms < ${this.state.minOrderLiveMs}ms, keeping to earn points.`);
+          } else {
+            log.info(`[SELL] Too far from mark price (${distance.toFixed(2)} bp > ${maxReplaceBp.toFixed(2)} bp), canceling and replacing...`);
+            await this.replaceOrder('sell');
+          }
         } else if (distance.lt(new Decimal(minDistanceBp))) {
           log.debug(`[SELL] Within dead-zone (${distance.toFixed(2)} bp < ${minDistanceBp} bp), skipping replace.`);
         } else if (distance.gt(new Decimal(maxDistanceBp))) {
@@ -537,7 +559,7 @@ export class MakerPointsBot extends EventEmitter {
       const newPrice = this.orderManager.calculateOrderPrice(
         side,
         this.markPrice,
-        this.config.trading.orderDistanceBp
+        this.calculateDynamicOrderDistanceBp()
       );
 
       log.info(`[${side.toUpperCase()}] New price: $${newPrice.toFixed(2)}`);
@@ -554,8 +576,10 @@ export class MakerPointsBot extends EventEmitter {
       if (newOrder) {
         if (side === 'buy') {
           this.state.buyOrder = newOrder;
+          this.orderPlacedAt.buy = now;
         } else {
           this.state.sellOrder = newOrder;
+          this.orderPlacedAt.sell = now;
         }
         this.state.stats.ordersPlaced++;
         log.info(`[${side.toUpperCase()}] New order placed: ${newOrder.orderId} @ $${newOrder.price.toFixed(2)}`);
@@ -604,7 +628,7 @@ export class MakerPointsBot extends EventEmitter {
       // Close position immediately
       log.warn(`🔄 Closing position immediately...`);
       const closeSide = side === 'buy' ? 'sell' : 'buy';
-      const closed = await this.orderManager.closePosition(qty, closeSide);
+      const closed = await this.closePositionWithPolicy(qty, closeSide);
 
       if (!closed) {
         log.error('❌ Failed to close position!');
@@ -675,8 +699,22 @@ export class MakerPointsBot extends EventEmitter {
       return;
     }
 
+    if (this.markPrice.eq(0)) {
+      log.warn('Spread guard skipped: StandX mark price unavailable.');
+      return;
+    }
+
     const mid = bestBid.plus(bestAsk).div(2);
     const spreadBp = bestAsk.minus(bestBid).div(mid).mul(10000);
+    const basisBp = this.markPrice.minus(mid).abs().div(mid).mul(10000);
+    const basisThreshold = new Decimal(this.config.spreadGuard.basisDiffBp);
+
+    if (basisBp.gte(basisThreshold)) {
+      log.warn(
+        `Spread guard softened: StandX vs Binance basis ${basisBp.toFixed(2)} bp ≥ ${basisThreshold.toFixed(2)} bp`
+      );
+      return;
+    }
 
     this.updateSpreadSamples(spreadBp);
     const baseline = this.calculateSpreadBaseline();
@@ -836,6 +874,46 @@ export class MakerPointsBot extends EventEmitter {
     return 'normal';
   }
 
+  private calculateDynamicOrderDistanceBp(): number {
+    const { regime } = this.getRegimeAdjustments();
+    if (regime === 'high') {
+      return this.config.trading.orderDistanceHighVolBp || this.config.trading.orderDistanceBp;
+    }
+    if (regime === 'low') {
+      return this.config.trading.orderDistanceLowVolBp || this.config.trading.orderDistanceBp;
+    }
+    return this.config.trading.orderDistanceNormalVolBp || this.config.trading.orderDistanceBp;
+  }
+
+  private getOrderLiveMs(side: OrderSide): number {
+    const placedAt = this.orderPlacedAt[side];
+    if (!placedAt) {
+      return 0;
+    }
+    return Date.now() - placedAt;
+  }
+
+  private hasMetMinLiveTime(orderLiveMs: number): boolean {
+    return orderLiveMs >= this.state.minOrderLiveMs;
+  }
+
+  private async closePositionWithPolicy(qty: Decimal, side: OrderSide): Promise<boolean> {
+    const mode = this.config.trading.closePositionMode;
+    if (mode === 'limit') {
+      const limitPrice = this.orderManager.calculateOrderPrice(
+        side,
+        this.markPrice,
+        this.config.trading.closePositionOffsetBp
+      );
+      return this.orderManager.closePosition(qty, side, {
+        mode: 'limit',
+        price: limitPrice,
+        timeoutMs: this.config.trading.closePositionTimeoutMs
+      });
+    }
+    return this.orderManager.closePosition(qty, side, { mode: 'market' });
+  }
+
   private shouldRestoreOrders(): boolean {
     if (!this.state.isRunning || this.stopRequested) {
       return false;
@@ -870,7 +948,7 @@ export class MakerPointsBot extends EventEmitter {
         await telegram.warning(`Existing position: ${position} BTC, closing...`);
 
         const side = position.gt(0) ? 'sell' : 'buy';
-        const closed = await this.orderManager.closePosition(position.abs(), side);
+        const closed = await this.closePositionWithPolicy(position.abs(), side);
 
         if (closed) {
           log.info('✅ Existing position closed');

@@ -86,6 +86,7 @@ export interface BotState {
     sell: number;
   };
   minReplaceIntervalMs: number;
+  minOrderLiveMs: number;
   stats: BotStats;
 }
 
@@ -104,10 +105,17 @@ export interface TradingConfig {
   mode: TradingMode;
   orderSizeBtc: number;
   orderDistanceBp: number;
+  orderDistanceLowVolBp: number;
+  orderDistanceNormalVolBp: number;
+  orderDistanceHighVolBp: number;
   minDistanceBp: number;
   maxDistanceBp: number;
   minReplaceIntervalMs: number;
   replaceDeadZoneBp: number;
+  minOrderLiveMs: number;
+  closePositionMode: 'market' | 'limit';
+  closePositionOffsetBp: number;
+  closePositionTimeoutMs: number;
 }
 
 export interface BinanceConfig {
@@ -119,6 +127,7 @@ export interface SpreadGuardConfig {
   enabled: boolean;
   jumpSpreadBp: number;
   maxSpreadBp: number;
+  basisDiffBp: number;
   lookbackSamples: number;
   quantileSamples: number;
   maxQuantile: number;
