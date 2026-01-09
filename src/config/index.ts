@@ -52,6 +52,24 @@ const config = convict({
       default: 20,
       env: 'TRADING_ORDER_DISTANCE_BP'
     },
+    orderDistanceLowVolBp: {
+      doc: 'Target order distance in basis points for low-volatility regime',
+      format: Number,
+      default: 8,
+      env: 'TRADING_ORDER_DISTANCE_LOW_VOL_BP'
+    },
+    orderDistanceNormalVolBp: {
+      doc: 'Target order distance in basis points for normal-volatility regime',
+      format: Number,
+      default: 15,
+      env: 'TRADING_ORDER_DISTANCE_NORMAL_VOL_BP'
+    },
+    orderDistanceHighVolBp: {
+      doc: 'Target order distance in basis points for high-volatility regime',
+      format: Number,
+      default: 25,
+      env: 'TRADING_ORDER_DISTANCE_HIGH_VOL_BP'
+    },
     minDistanceBp: {
       doc: 'Minimum distance in basis points (too close = risk of fill)',
       format: Number,

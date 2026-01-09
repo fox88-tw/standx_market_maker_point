@@ -346,6 +346,7 @@ export class MakerPointsBot extends EventEmitter {
   private async placeInitialOrders(): Promise<void> {
     try {
       const mode = this.config.trading.mode;
+      const { distanceBp, regime, usedFallback } = this.calculateDynamicOrderDistanceBp();
 
       // Cancel any existing orders
       await this.orderManager.cancelAllOrders();
@@ -355,7 +356,7 @@ export class MakerPointsBot extends EventEmitter {
         const buyPrice = this.orderManager.calculateOrderPrice(
           'buy',
           this.markPrice,
-          this.config.trading.orderDistanceBp
+          distanceBp
         );
 
         const buyOrder = await this.orderManager.placeOrder(
@@ -374,7 +375,7 @@ export class MakerPointsBot extends EventEmitter {
         const sellPrice = this.orderManager.calculateOrderPrice(
           'sell',
           this.markPrice,
-          this.config.trading.orderDistanceBp
+          distanceBp
         );
 
         const sellOrder = await this.orderManager.placeOrder(
@@ -390,7 +391,9 @@ export class MakerPointsBot extends EventEmitter {
       }
 
       this.emit('orders_placed', this.state);
-      log.info('✅ Initial orders placed');
+      log.info(
+        `✅ Initial orders placed (distance ${distanceBp} bp, regime ${regime}${usedFallback ? ', fallback' : ''})`
+      );
 
     } catch (error: any) {
       log.error(`Error placing initial orders: ${error.message}`);
@@ -432,6 +435,10 @@ export class MakerPointsBot extends EventEmitter {
 
       const minDistanceBp = this.config.trading.minDistanceBp;
       const maxDistanceBp = this.config.trading.maxDistanceBp;
+      const { distanceBp, regime, usedFallback } = this.calculateDynamicOrderDistanceBp();
+      const dynamicRange = this.calculateDynamicDistanceRange(distanceBp, regime);
+      const effectiveMinDistanceBp = usedFallback ? minDistanceBp : dynamicRange.minDistanceBp;
+      const effectiveMaxDistanceBp = usedFallback ? maxDistanceBp : dynamicRange.maxDistanceBp;
 
       // Check buy order
       if (this.state.buyOrder && this.state.buyOrder.status === 'OPEN') {
@@ -442,14 +449,20 @@ export class MakerPointsBot extends EventEmitter {
           .mul(10000);
 
         // Replace if too close (risk of fill) or too far (no points)
-        if (distance.lt(new Decimal(minDistanceBp))) {
-          log.info(`[BUY] Too close to mark price (${distance.toFixed(2)} bp < ${minDistanceBp} bp), canceling and replacing...`);
+        if (distance.lt(new Decimal(effectiveMinDistanceBp))) {
+          log.info(
+            `[BUY] Too close to mark price (${distance.toFixed(2)} bp < ${effectiveMinDistanceBp} bp), canceling and replacing...`
+          );
           await this.replaceOrder('buy');
-        } else if (distance.gt(new Decimal(maxDistanceBp))) {
-          log.info(`[BUY] Too far from mark price (${distance.toFixed(2)} bp > ${maxDistanceBp} bp), canceling and replacing...`);
+        } else if (distance.gt(new Decimal(effectiveMaxDistanceBp))) {
+          log.info(
+            `[BUY] Too far from mark price (${distance.toFixed(2)} bp > ${effectiveMaxDistanceBp} bp), canceling and replacing...`
+          );
           await this.replaceOrder('buy');
         } else {
-          log.debug(`[BUY] Order in valid range: ${distance.toFixed(2)} bp [${minDistanceBp}-${maxDistanceBp} bp]`);
+          log.debug(
+            `[BUY] Order in valid range: ${distance.toFixed(2)} bp [${effectiveMinDistanceBp}-${effectiveMaxDistanceBp} bp]`
+          );
         }
       }
 
@@ -462,14 +475,20 @@ export class MakerPointsBot extends EventEmitter {
           .mul(10000);
 
         // Replace if too close (risk of fill) or too far (no points)
-        if (distance.lt(new Decimal(minDistanceBp))) {
-          log.info(`[SELL] Too close to mark price (${distance.toFixed(2)} bp < ${minDistanceBp} bp), canceling and replacing...`);
+        if (distance.lt(new Decimal(effectiveMinDistanceBp))) {
+          log.info(
+            `[SELL] Too close to mark price (${distance.toFixed(2)} bp < ${effectiveMinDistanceBp} bp), canceling and replacing...`
+          );
           await this.replaceOrder('sell');
-        } else if (distance.gt(new Decimal(maxDistanceBp))) {
-          log.info(`[SELL] Too far from mark price (${distance.toFixed(2)} bp > ${maxDistanceBp} bp), canceling and replacing...`);
+        } else if (distance.gt(new Decimal(effectiveMaxDistanceBp))) {
+          log.info(
+            `[SELL] Too far from mark price (${distance.toFixed(2)} bp > ${effectiveMaxDistanceBp} bp), canceling and replacing...`
+          );
           await this.replaceOrder('sell');
         } else {
-          log.debug(`[SELL] Order in valid range: ${distance.toFixed(2)} bp [${minDistanceBp}-${maxDistanceBp} bp]`);
+          log.debug(
+            `[SELL] Order in valid range: ${distance.toFixed(2)} bp [${effectiveMinDistanceBp}-${effectiveMaxDistanceBp} bp]`
+          );
         }
       }
 
@@ -503,10 +522,11 @@ export class MakerPointsBot extends EventEmitter {
       }
 
       // Calculate new price
+      const { distanceBp } = this.calculateDynamicOrderDistanceBp();
       const newPrice = this.orderManager.calculateOrderPrice(
         side,
         this.markPrice,
-        this.config.trading.orderDistanceBp
+        distanceBp
       );
 
       log.info(`[${side.toUpperCase()}] New price: $${newPrice.toFixed(2)}`);
@@ -709,6 +729,37 @@ export class MakerPointsBot extends EventEmitter {
       return quantileValue;
     }
     return new Decimal(this.config.spreadGuard.maxSpreadBp);
+  }
+
+  private calculateDynamicOrderDistanceBp(): {
+    distanceBp: number;
+    regime: 'low' | 'normal' | 'high';
+    usedFallback: boolean;
+  } {
+    const { regime } = this.getRegimeAdjustments();
+    const fallback = this.config.trading.orderDistanceBp;
+    const distanceMap = {
+      low: this.config.trading.orderDistanceLowVolBp,
+      normal: this.config.trading.orderDistanceNormalVolBp,
+      high: this.config.trading.orderDistanceHighVolBp
+    };
+
+    const selected = distanceMap[regime];
+    if (selected && selected > 0) {
+      return { distanceBp: selected, regime, usedFallback: false };
+    }
+
+    return { distanceBp: fallback, regime, usedFallback: true };
+  }
+
+  private calculateDynamicDistanceRange(
+    distanceBp: number,
+    regime: 'low' | 'normal' | 'high'
+  ): { minDistanceBp: number; maxDistanceBp: number } {
+    const bufferBp = regime === 'high' ? 10 : 5;
+    const minDistanceBp = Math.max(0, distanceBp - bufferBp);
+    const maxDistanceBp = distanceBp + bufferBp;
+    return { minDistanceBp, maxDistanceBp };
   }
 
   private getRegimeAdjustments(): {

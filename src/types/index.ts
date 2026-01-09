@@ -99,6 +99,9 @@ export interface TradingConfig {
   mode: TradingMode;
   orderSizeBtc: number;
   orderDistanceBp: number;
+  orderDistanceLowVolBp: number;
+  orderDistanceNormalVolBp: number;
+  orderDistanceHighVolBp: number;
   minDistanceBp: number;
   maxDistanceBp: number;
 }
