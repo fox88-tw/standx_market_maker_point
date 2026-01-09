@@ -677,6 +677,12 @@ export class MakerPointsBot extends EventEmitter {
 
     const mid = bestBid.plus(bestAsk).div(2);
     const spreadBp = bestAsk.minus(bestBid).div(mid).mul(10000);
+    const markPrice = this.markPrice;
+    const basisDiffThreshold = new Decimal(this.config.spreadGuard.basisDiffBp);
+    const basisDiffBp = markPrice.gt(0)
+      ? markPrice.minus(mid).abs().div(mid).mul(10000)
+      : new Decimal(0);
+    const basisDiffActive = basisDiffThreshold.gt(0) && basisDiffBp.gte(basisDiffThreshold);
 
     this.updateSpreadSamples(spreadBp);
     const baseline = this.calculateSpreadBaseline();
@@ -684,8 +690,11 @@ export class MakerPointsBot extends EventEmitter {
     const jumpThresholdBase = new Decimal(this.config.spreadGuard.jumpSpreadBp);
     const maxSpreadBase = this.calculateDynamicMaxSpread();
     const { regime, jumpMultiplier, maxMultiplier, volatility } = this.getRegimeAdjustments();
-    const jumpThreshold = jumpThresholdBase.mul(jumpMultiplier);
-    const maxSpread = maxSpreadBase.mul(maxMultiplier);
+    const basisDiffMultiplier = basisDiffActive
+      ? new Decimal(this.config.spreadGuard.basisDiffGuardMultiplier)
+      : Decimal(1);
+    const jumpThreshold = jumpThresholdBase.mul(jumpMultiplier).mul(basisDiffMultiplier);
+    const maxSpread = maxSpreadBase.mul(maxMultiplier).mul(basisDiffMultiplier);
 
     if (this.isSpreadGuardCoolingDown()) {
       return;
@@ -695,11 +704,14 @@ export class MakerPointsBot extends EventEmitter {
     const spreadTooWide = spreadBp.gte(maxSpread);
 
     if (spreadJumped || spreadTooWide) {
+      const basisDiffNote = basisDiffActive
+        ? ` (basis diff ${basisDiffBp.toFixed(2)} bp ≥ ${basisDiffThreshold.toFixed(2)} bp, guard sensitivity reduced)`
+        : '';
       const reason = spreadTooWide
         ? `spread ${spreadBp.toFixed(2)} bp ≥ max ${maxSpread.toFixed(2)} bp`
         : `spread jumped ${spreadBp.toFixed(2)} bp (baseline ${baseline.toFixed(2)} bp, jump ${jumpThreshold.toFixed(2)} bp)`;
       log.warn(
-        `🚨 Binance spread widening detected (${regime} vol=${volatility.toFixed(2)} bp): ${reason}. Canceling orders.`
+        `🚨 Binance spread widening detected (${regime} vol=${volatility.toFixed(2)} bp): ${reason}${basisDiffNote}. Canceling orders.`
       );
       await this.orderManager.cancelAllOrders();
       this.state.buyOrder = null;
@@ -707,7 +719,7 @@ export class MakerPointsBot extends EventEmitter {
       this.spreadGuardCooldownUntil = Date.now() + this.config.spreadGuard.cooldownMs;
 
       if (telegram.isEnabled()) {
-        await telegram.warning(`Spread guard triggered: ${reason}. Orders canceled.`);
+        await telegram.warning(`Spread guard triggered: ${reason}${basisDiffNote}. Orders canceled.`);
       }
     }
   }
