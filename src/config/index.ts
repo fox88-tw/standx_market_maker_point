@@ -63,6 +63,18 @@ const config = convict({
       format: Number,
       default: 30,
       env: 'TRADING_MAX_DISTANCE_BP'
+    },
+    minReplaceIntervalMs: {
+      doc: 'Minimum interval between order replacements in milliseconds',
+      format: Number,
+      default: 1000,
+      env: 'TRADING_MIN_REPLACE_INTERVAL_MS'
+    },
+    replaceDeadZoneBp: {
+      doc: 'Dead-zone buffer in basis points for replacement decisions',
+      format: Number,
+      default: 2,
+      env: 'TRADING_REPLACE_DEAD_ZONE_BP'
     }
   },
   binance: {

@@ -81,6 +81,11 @@ export interface BotState {
   position: Decimal;
   buyOrder: OrderInfo | null;
   sellOrder: OrderInfo | null;
+  lastReplaceAt: {
+    buy: number;
+    sell: number;
+  };
+  minReplaceIntervalMs: number;
   stats: BotStats;
 }
 
@@ -101,6 +106,8 @@ export interface TradingConfig {
   orderDistanceBp: number;
   minDistanceBp: number;
   maxDistanceBp: number;
+  minReplaceIntervalMs: number;
+  replaceDeadZoneBp: number;
 }
 
 export interface BinanceConfig {

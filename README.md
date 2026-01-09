@@ -107,6 +107,8 @@ TRADING_ORDER_SIZE_BTC=0.0001                # 订单大小（BTC）
 TRADING_ORDER_DISTANCE_BP=10                 # 目标距离（bp）
 TRADING_MIN_DISTANCE_BP=5                    # 最小距离（bp）
 TRADING_MAX_DISTANCE_BP=15                   # 最大距离（bp）
+TRADING_MIN_REPLACE_INTERVAL_MS=1000         # 替换最小间隔（ms）
+TRADING_REPLACE_DEAD_ZONE_BP=2               # 替换缓冲带（bp）
 ```
 
 #### Binance永续期货BBO配置
@@ -167,6 +169,15 @@ SPREAD_GUARD_COOLDOWN_MS=5000                # 触发撤单后的冷却时间（
   - 价格太远可能吃不到积分
   - 建议设置为目标距离的150%
   - 例如：目标10bp，最大15bp
+
+- **TRADING_MIN_REPLACE_INTERVAL_MS**: 替换最小间隔（ms）
+  - 两次撤单重挂之间的最短时间
+  - 建议设置为 500~2000ms 视流动性调整
+
+- **TRADING_REPLACE_DEAD_ZONE_BP**: 替换缓冲带（bp）
+  - 在 min/max 阈值外再加缓冲带，避免抖动重挂
+  - 例如：min=5bp, max=15bp, dead-zone=2bp
+    - 触发过近 < 3bp 或过远 > 17bp 才重挂
 
 #### Telegram通知（可选）
 
