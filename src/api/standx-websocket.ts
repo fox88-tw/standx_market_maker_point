@@ -52,7 +52,9 @@ export class StandXWebSocket extends EventEmitter {
    * Connect to both WebSocket streams
    */
   async connect(): Promise<void> {
-    await this.auth.login();
+    if (!this.auth.isLoggedIn()) {
+      await this.auth.login();
+    }
     this.isManualClose = false;
 
     // Connect Market Stream

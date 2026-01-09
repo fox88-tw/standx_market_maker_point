@@ -121,6 +121,8 @@ STANDX_CHAIN=bsc                             # 链（bsc或eth）
 ```bash
 TRADING_SYMBOL=BTC-USD                       # 交易对
 TRADING_MODE=buy                             # 模式: buy/sell/both
+TRADING_LEVERAGE=10                          # 杠杆倍数
+TRADING_MARGIN_MODE=isolated                 # 保证金模式: cross/isolated
 TRADING_ORDER_SIZE_BTC=0.0001                # 订单大小（BTC）
 TRADING_ORDER_DISTANCE_BP=10                 # 目标距离（bp）
 TRADING_MIN_DISTANCE_BP=5                    # 最小距离（bp）
@@ -181,6 +183,14 @@ SPREAD_GUARD_COOLDOWN_MS=5000                # 触发撤单后的冷却时间（
   - `buy`: 只挂买单（安全，避免做多风险）
   - `sell`: 只挂卖单（安全，避免做空风险）
   - `both`: 双边挂单（买单+卖单，积分更多但风险更高）
+
+- **TRADING_LEVERAGE**: 杠杆倍数
+  - 启动时设置一次
+  - 例如：10 表示 10x
+
+- **TRADING_MARGIN_MODE**: 保证金模式
+  - `isolated`: 逐仓（单仓独立，风险隔离）
+  - `cross`: 全仓（资金共用，抗波动更强但连带风险）
 
 - **TRADING_ORDER_DISTANCE_BP**: 目标距离
   - 订单距离mark price的理想距离（bp）

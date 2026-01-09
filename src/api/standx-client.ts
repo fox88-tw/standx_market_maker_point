@@ -282,6 +282,54 @@ export class StandXClient {
   }
 
   /**
+   * Change leverage for a symbol
+   */
+  async changeLeverage(symbol: string, leverage: number): Promise<void> {
+    const timestamp = Date.now();
+    const params = {
+      symbol,
+      leverage
+    };
+    const payload = JSON.stringify(params);
+    const headers = this.buildHeaders(payload, timestamp);
+
+    const response = await this.client.post(
+      `${this.baseUrl}/api/change_leverage`,
+      payload,
+      { headers }
+    );
+
+    const { code, message } = response.data || {};
+    if (code !== 0 && message !== 'success') {
+      throw new Error(message || 'Failed to change leverage');
+    }
+  }
+
+  /**
+   * Change margin mode for a symbol
+   */
+  async changeMarginMode(symbol: string, mode: 'cross' | 'isolated'): Promise<void> {
+    const timestamp = Date.now();
+    const params = {
+      symbol,
+      margin_mode: mode
+    };
+    const payload = JSON.stringify(params);
+    const headers = this.buildHeaders(payload, timestamp);
+
+    const response = await this.client.post(
+      `${this.baseUrl}/api/change_margin_mode`,
+      payload,
+      { headers }
+    );
+
+    const { code, message } = response.data || {};
+    if (code !== 0 && message !== 'success') {
+      throw new Error(message || 'Failed to change margin mode');
+    }
+  }
+
+  /**
    * Fetch BBO prices
    */
   async fetchBBOPrices(symbol: string): Promise<[Decimal, Decimal]> {

@@ -103,6 +103,8 @@ export interface StandXConfig {
 export interface TradingConfig {
   symbol: string;
   mode: TradingMode;
+  leverage: number;
+  marginMode: 'cross' | 'isolated';
   orderSizeBtc: number;
   orderDistanceBp: number;
   orderDistanceLowVolBp: number;
