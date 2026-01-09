@@ -63,6 +63,18 @@ const config = convict({
       format: Number,
       default: 30,
       env: 'TRADING_MAX_DISTANCE_BP'
+    },
+    closePositionMode: {
+      doc: 'Close position mode (market or limit)',
+      format: ['market', 'limit'],
+      default: 'market',
+      env: 'CLOSE_POSITION_MODE'
+    },
+    closePositionMaxWaitMs: {
+      doc: 'Max wait time for limit close before falling back to market',
+      format: Number,
+      default: 5000,
+      env: 'CLOSE_POSITION_MAX_WAIT_MS'
     }
   },
   binance: {

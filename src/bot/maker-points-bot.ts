@@ -571,7 +571,55 @@ export class MakerPointsBot extends EventEmitter {
       // Close position immediately
       log.warn(`🔄 Closing position immediately...`);
       const closeSide = side === 'buy' ? 'sell' : 'buy';
-      const closed = await this.orderManager.closePosition(qty, closeSide);
+      const closeMode = this.config.trading.closePositionMode;
+      let closeOptions: { mode: 'market' | 'limit' | 'adaptive'; price?: Decimal; maxWaitMs?: number };
+
+      if (closeMode === 'market') {
+        closeOptions = { mode: 'market' };
+      } else {
+        let useMarket = false;
+        let limitPrice: Decimal | null = null;
+        let spreadBp: Decimal | null = null;
+
+        try {
+          const { symbol } = this.config.binance;
+          const { bestBid, bestAsk } = await this.binanceClient.fetchBbo(symbol);
+
+          if (bestBid.lte(0) || bestAsk.lte(0)) {
+            useMarket = true;
+            log.warn('Invalid BBO for close decision, switching to MARKET close.');
+          } else {
+            const mid = bestBid.plus(bestAsk).div(2);
+            spreadBp = bestAsk.minus(bestBid).div(mid).mul(10000);
+            const maxSpread = new Decimal(this.config.spreadGuard.maxSpreadBp);
+
+            if (spreadBp.gt(maxSpread)) {
+              useMarket = true;
+              log.warn(`Spread ${spreadBp.toFixed(2)} bp > ${maxSpread.toFixed(2)} bp, switching to MARKET close.`);
+            } else {
+              limitPrice = closeSide === 'sell' ? bestBid : bestAsk;
+            }
+          }
+        } catch (error: any) {
+          useMarket = true;
+          log.warn(`Failed to fetch BBO for close decision: ${error.message}`);
+        }
+
+        if (useMarket || !limitPrice) {
+          closeOptions = { mode: 'market' };
+        } else {
+          closeOptions = {
+            mode: 'adaptive',
+            price: limitPrice,
+            maxWaitMs: this.config.trading.closePositionMaxWaitMs
+          };
+          if (spreadBp) {
+            log.warn(`Using adaptive limit close (spread ${spreadBp.toFixed(2)} bp).`);
+          }
+        }
+      }
+
+      const closed = await this.orderManager.closePosition(qty, closeSide, closeOptions);
 
       if (!closed) {
         log.error('❌ Failed to close position!');

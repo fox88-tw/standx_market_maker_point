@@ -168,42 +168,82 @@ export class OrderManager {
   }
 
   /**
-   * Close position with market order
+   * Close position with market, limit, or adaptive price
    */
-  async closePosition(qty: Decimal, side: OrderSide): Promise<boolean> {
+  async closePosition(
+    qty: Decimal,
+    side: OrderSide,
+    options?: {
+      mode?: 'market' | 'limit' | 'adaptive';
+      price?: Decimal;
+      maxWaitMs?: number;
+    }
+  ): Promise<boolean> {
+    const mode = options?.mode ?? 'market';
+    const maxWaitMs = options?.maxWaitMs ?? 5000;
+
     try {
-      log.warn(`🔄 Closing ${side} position: ${qty} BTC with MARKET order`);
+      if (mode === 'market') {
+        return await this.closeWithMarketOrder(qty, side);
+      }
 
-      // Use MARKET order for immediate fill
-      const result = await this.placeOrder(side, qty, Decimal(0), true, 'market');
-
-      if (!result) {
-        log.error('Failed to place close market order');
+      if (!options?.price) {
+        log.error(`Missing ${mode} price for closing position`);
         return false;
       }
 
-      // Market orders should be filled immediately
-      if (result.status === 'FILLED') {
-        log.warn(`✅ Position closed immediately: ${qty} BTC`);
-        return true;
+      const priceLabel = mode === 'adaptive' ? 'ADAPTIVE LIMIT' : 'LIMIT';
+      log.warn(`🔄 Closing ${side} position: ${qty} BTC with ${priceLabel} @ $${options.price}`);
+
+      const limitOrder = await this.placeOrder(side, qty, options.price, true, 'limit');
+
+      if (!limitOrder) {
+        log.error('Failed to place close limit order');
+        return false;
       }
 
-      // If not immediately filled, wait briefly for confirmation
-      log.info(`Waiting for market order confirmation...`);
-      const filledOrder = await this.waitForOrderFill(result.orderId, 5000);
+      const filledOrder = await this.waitForOrderFill(limitOrder.orderId, maxWaitMs);
 
       if (filledOrder && filledOrder.status === 'FILLED') {
-        log.warn(`✅ Position closed: ${qty} BTC`);
+        log.warn(`✅ Position closed with ${priceLabel}: ${qty} BTC`);
         return true;
       }
 
-      log.error('Failed to close position');
-      return false;
+      log.warn(`⏳ ${priceLabel} not filled within ${maxWaitMs} ms, falling back to MARKET`);
+      await this.cancelOrder(limitOrder.orderId);
+      return await this.closeWithMarketOrder(qty, side);
 
     } catch (error: any) {
       log.error(`Error closing position: ${error.message}`);
       return false;
     }
+  }
+
+  private async closeWithMarketOrder(qty: Decimal, side: OrderSide): Promise<boolean> {
+    log.warn(`🔄 Closing ${side} position: ${qty} BTC with MARKET order`);
+
+    const result = await this.placeOrder(side, qty, Decimal(0), true, 'market');
+
+    if (!result) {
+      log.error('Failed to place close market order');
+      return false;
+    }
+
+    if (result.status === 'FILLED') {
+      log.warn(`✅ Position closed immediately: ${qty} BTC`);
+      return true;
+    }
+
+    log.info(`Waiting for market order confirmation...`);
+    const filledOrder = await this.waitForOrderFill(result.orderId, 5000);
+
+    if (filledOrder && filledOrder.status === 'FILLED') {
+      log.warn(`✅ Position closed: ${qty} BTC`);
+      return true;
+    }
+
+    log.error('Failed to close position');
+    return false;
   }
 
   /**

@@ -85,6 +85,7 @@ export interface BotState {
 }
 
 export type TradingMode = 'both' | 'buy' | 'sell';
+export type ClosePositionMode = 'market' | 'limit';
 
 // ==================== 配置 ====================
 
@@ -101,6 +102,8 @@ export interface TradingConfig {
   orderDistanceBp: number;
   minDistanceBp: number;
   maxDistanceBp: number;
+  closePositionMode: ClosePositionMode;
+  closePositionMaxWaitMs: number;
 }
 
 export interface BinanceConfig {
